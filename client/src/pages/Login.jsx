@@ -122,6 +122,7 @@ function Login() {
       setLoading(true);
       const query = redirect ? `?redirect=${encodeURIComponent(redirect)}` : "";
       const payload = {
+        identifier: form.email.trim(),
         email: form.email.trim().toLowerCase(),
         password: form.password.trim()
       };
@@ -167,9 +168,9 @@ function Login() {
         <h1>GT ONE Login</h1>
         <p className="muted">Central SSO authentication system</p>
 
-        <label>Email</label>
+        <label>Email or Employee ID</label>
         <input
-          type="email"
+          type="text"
           name="email"
           value={form.email}
           onChange={onChange}

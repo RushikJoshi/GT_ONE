@@ -703,28 +703,140 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
   return null;
 };
 
-export const validateLogin = async ({ email, password }) => {
-  const normalizedEmail = email?.trim()?.toLowerCase();
-  const normalizedPassword = password?.trim();
+const getHrmsAuthBaseUrl = () => {
+  const explicit = String(process.env.HRMS_AUTH_BASE_URL || "").trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
 
-  if (!normalizedEmail || !normalizedPassword) {
-    return { error: { status: 400, message: "Email and password are required" } };
+  // Derive from provision URL when available (e.g. http://localhost:5003/api/sso/provision-tenant)
+  const provision = String(process.env.HRMS_PROVISION_URL || "").trim();
+  if (provision) {
+    try {
+      const u = new URL(provision);
+      return `${u.protocol}//${u.host}`;
+    } catch {
+      // ignore
+    }
   }
 
-  const user = await User.findOne({ email: normalizedEmail });
-  if (!user) {
-    logAuth("login_failed", { reason: "user_not_found", email: normalizedEmail });
-    return { error: { status: 401, message: "User not found" } };
+  return "http://localhost:5001";
+};
+
+const isEmailLike = (value) => String(value || "").includes("@");
+
+async function tryExternalHrmsLogin({ identifier, password }) {
+  const base = getHrmsAuthBaseUrl();
+  const res = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identifier, password })
+  });
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (_e) {
+    data = null;
   }
 
-  const isPasswordValid = await bcrypt.compare(normalizedPassword, user.password);
-  if (!isPasswordValid) {
-    logAuth("login_failed", { reason: "password_mismatch", email: normalizedEmail });
-    return { error: { status: 401, message: "Invalid password" } };
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      message: data?.message || "invalid_credentials"
+    };
   }
 
-  logAuth("login_success", { email: normalizedEmail, role: user.role });
-  return { user };
+  return { ok: true, data };
+}
+
+export const validateLogin = async ({ identifier, password }) => {
+  const normalizedIdentifier = String(identifier || "").trim();
+  const normalizedPassword = String(password || "").trim();
+
+  if (!normalizedIdentifier || !normalizedPassword) {
+    return { error: { status: 400, message: "Email/Employee ID and password are required" } };
+  }
+
+  const normalizedEmail = isEmailLike(normalizedIdentifier)
+    ? normalizedIdentifier.toLowerCase()
+    : null;
+
+  // 1) Normal SSO DB email login
+  if (normalizedEmail) {
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      logAuth("login_failed", { reason: "user_not_found", email: normalizedEmail });
+    } else {
+      const isPasswordValid = await bcrypt.compare(normalizedPassword, user.password);
+      if (!isPasswordValid) {
+        logAuth("login_failed", { reason: "password_mismatch", email: normalizedEmail });
+        return { error: { status: 401, message: "Invalid password" } };
+      }
+
+      logAuth("login_success", { email: normalizedEmail, role: user.role });
+      return { user };
+    }
+  }
+
+  // 2) Fallback: HRMS unified login (supports employeeId/employeeCode/email across tenants)
+  try {
+    const ext = await tryExternalHrmsLogin({
+      identifier: normalizedIdentifier,
+      password: normalizedPassword
+    });
+
+    if (!ext.ok) {
+      logAuth("login_failed", {
+        reason: "external_hrms_rejected",
+        identifier: normalizedIdentifier,
+        status: ext.status
+      });
+      return { error: { status: 401, message: ext.message || "User not found" } };
+    }
+
+    const extUser = ext.data?.user || null;
+    const extEmail = String(extUser?.email || "").trim().toLowerCase();
+    if (!extEmail) {
+      return { error: { status: 401, message: "User not found" } };
+    }
+
+    // Map to existing company if possible (by companyCode)
+    const companyCode = String(extUser?.companyCode || ext.data?.companyCode || "").trim();
+    const company =
+      companyCode
+        ? await Company.findOne({
+            $or: [{ code: companyCode }, { companyCode }]
+          }).lean()
+        : null;
+
+    // Create or update SSO user so future sessions work and token payload has stable user id.
+    const passwordHash = await bcrypt.hash(normalizedPassword, 10);
+    const upserted = await User.findOneAndUpdate(
+      { email: extEmail },
+      {
+        $set: {
+          name: String(extUser?.name || extUser?.fullName || extEmail).trim() || extEmail,
+          email: extEmail,
+          role: String(extUser?.role || "employee").trim().toLowerCase(),
+          password: passwordHash,
+          companyId: company?._id || null,
+          tenantId: null
+        }
+      },
+      { new: true, upsert: true }
+    );
+
+    logAuth("login_success_external_hrms", {
+      email: extEmail,
+      role: upserted.role,
+      identifier: normalizedIdentifier
+    });
+
+    return { user: upserted };
+  } catch (error) {
+    console.error("[SSO] External HRMS login error:", error?.message || error);
+    return { error: { status: 500, message: "Internal server error" } };
+  }
 };
 
 export const getLoginResponseData = async ({ user, redirect, requestOrigin }) => {
