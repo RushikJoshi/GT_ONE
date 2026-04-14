@@ -1,7 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+
 :root {
-  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
-  color: #102238;
-  background: radial-gradient(circle at 20% 20%, #e5fff6 0%, #f4f8ff 35%, #fffaf0 100%);
+  font-family: "Plus Jakarta Sans", "Inter", sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -11,13 +15,20 @@
 body {
   margin: 0;
   min-height: 100vh;
+  background-color: #f8fafc;
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(214, 100%, 97%, 1) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, hsla(214, 100%, 97%, 1) 0px, transparent 50%);
+  background-attachment: fixed;
 }
 
 h1,
 h2,
 h3,
+h4,
 p {
   margin: 0;
+  letter-spacing: -0.02em;
 }
 
 .center-screen {
@@ -81,7 +92,7 @@ button,
   padding: 10px 14px;
   border: 0;
   border-radius: 10px;
-  background: #0b7a64;
+  background: #2563eb;
   color: #fff;
   font-weight: 700;
   cursor: pointer;
@@ -166,7 +177,7 @@ button:disabled {
 }
 
 .tab-btn.active {
-  background: #0b7a64;
+  background: #2563eb;
   color: #ffffff;
 }
 
@@ -224,7 +235,7 @@ button:disabled {
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #0b7a64;
+  color: #2563eb;
   font-weight: 800;
   margin-bottom: 6px;
 }
@@ -288,8 +299,8 @@ button:disabled {
 }
 
 .project-card.active {
-  border-color: #0b7a64;
-  box-shadow: 0 0 0 3px rgba(11, 122, 100, 0.12);
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 .project-card-header,
