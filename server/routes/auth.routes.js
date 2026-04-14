@@ -1,20 +1,13 @@
 import express from "express";
-import { register, login, logout } from "../controllers/auth.controller.js";
-import { verifySSO } from "../middleware/verifySSO.js";
-import { getMe } from "../controllers/auth.controller.js";
+import { login, getMe, logout } from "../controllers/auth.controller.js";
+import { optionalProtect } from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 
-// ================= PUBLIC ROUTES =================
-router.post("/register", register);
 router.post("/login", login);
-
-// ================= SSO ROUTES =================
-
-// 🔥 Get current logged-in user (SSO check)
-router.get("/sso/me", getMe);
-
-// 🔥 Logout
+router.get("/me", optionalProtect, getMe);
+router.get("/sso/me", optionalProtect, getMe);
 router.post("/logout", logout);
+router.get("/logout", logout);
 
 export default router;

@@ -1,23 +1,35 @@
 import jwt from "jsonwebtoken";
 
 export const verifySSO = (req, res, next) => {
-    try {
-        const token = req.cookies.token; // 🍪 READ COOKIE
+  try {
+    const token = req.cookies.token;
 
-        if (!token) {
-            return res.status(401).json({
-                msg: "No SSO session detected"
-            });
-        }
-
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-        req.user = decoded; // 🔥 attach user
-
-        next();
-    } catch (err) {
-        return res.status(401).json({
-            msg: "Invalid or expired token"
-        });
+    if (!token) {
+      return res.status(401).json({
+        msg: "No SSO session detected",
+        reason: "no_session"
+      });
     }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+      issuer: process.env.JWT_ISSUER || "gitakshmi-sso",
+      audience: "sso",
+      algorithms: (process.env.JWT_ALLOWED_ALGS || "HS256")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    });
+
+    if (!decoded.sub || !(decoded.email || decoded.login) || !decoded.role || !Array.isArray(decoded.products)) {
+      return res.status(401).json({ msg: "Invalid token claims", reason: "missing_claims" });
+    }
+
+    req.user = decoded;
+
+    next();
+  } catch (_err) {
+    return res.status(401).json({
+      msg: "Invalid or expired token"
+    });
+  }
 };

@@ -1,173 +1,143 @@
-import User from "../models/User.js";
-import Company from "../models/Company.js";
-import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import User from "../models/User.js";
+import Tenant from "../models/Tenant.js";
+import {
+  getCookieOptions,
+  getLoginResponseData,
+  revokeSessionToken,
+  validateLogin
+} from "../services/auth.service.js";
 
-// ================= REGISTER =================
-export const register = async (req, res) => {
-    try {
-        const { name, email, password, companyId } = req.body;
-
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
-            return res.status(400).json({ msg: "User already exists" });
-        }
-
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        let allowedApps = [];
-        if (companyId) {
-            const company = await Company.findById(companyId);
-            if (company) {
-                allowedApps = company.allowedApps || [];
-            }
-        }
-
-        const user = await User.create({
-            name,
-            email,
-            password: hashedPassword,
-            companyId: companyId || null,
-            allowedApps,
-            isActive: true
-        });
-
-        return res.status(201).json({
-            msg: "User registered successfully",
-            user
-        });
-
-    } catch (err) {
-        return res.status(500).json({ msg: err.message });
-    }
-};
-
-// ================= LOGIN =================
+/**
+ * @desc    Login user & Set cookie
+ * @route   POST /api/auth/login
+ */
 export const login = async (req, res) => {
-    try {
-        const { email, password } = req.body;
+  try {
+    const { email, password } = req.body || {};
+    const { redirect } = req.query;
 
-        const user = await User.findOne({ email }).populate("companyId");
-
-        if (!user) {
-            return res.status(400).json({ msg: "User not found" });
-        }
-
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            return res.status(400).json({ msg: "Invalid password" });
-        }
-
-        if (user.isActive === false) {
-            return res.status(403).json({ msg: "User is inactive" });
-        }
-
-        const companyApps = user.companyId?.allowedApps || [];
-
-        const token = jwt.sign(
-            {
-                userId: user._id,
-                role: user.role,
-                companyId: user.companyId?._id || null,
-                allowedApps: user.allowedApps || [],
-                companyApps
-            },
-            process.env.JWT_SECRET,
-            { expiresIn: "1d" }
-        );
-
-        // 🍪 COOKIE (SSO FIXED)
-        res.cookie("token", token, {
-            httpOnly: true,
-            secure: false, // ⚠️ keep false for localhost
-            sameSite: "lax", // ✅ IMPORTANT
-            maxAge: 24 * 60 * 60 * 1000,
-            path: "/",
-        });
-
-        console.log("✅ COOKIE SET SUCCESSFULLY");
-
-        // 🔥 REDIRECT SUPPORT (MAIN FIX)
-        const redirectURL = req.query.redirect || "http://localhost:5173";
-
-        return res.json({
-            msg: "Login successful",
-            user,
-            redirect: redirectURL
-        });
-
-    } catch (err) {
-        return res.status(500).json({ msg: err.message });
+    const validation = await validateLogin({ email, password });
+    if (validation.error) {
+      return res.status(validation.error.status).json({ message: validation.error.message });
     }
+
+    const responseData = await getLoginResponseData({
+      user: validation.user,
+      redirect,
+      requestOrigin: req.headers.origin || req.headers.referer || null
+    });
+    if (responseData.error) {
+      return res.status(responseData.error.status).json({ message: responseData.error.message });
+    }
+
+    const cookieOptions = getCookieOptions(req.headers.host);
+    res.cookie("sso_token", responseData.token, cookieOptions);
+
+    console.log(`[SSO] User logged in: ${validation.user.email}, Role: ${validation.user.role}`);
+
+    return res.json({
+      success: true,
+      message: "Login successful",
+      redirectTo: responseData.redirectTo,
+      user: responseData.payloadUser
+    });
+  } catch (error) {
+    console.error(`[SSO] Login Error: ${error.message}`);
+    return res.status(500).json({ message: "Internal server error" });
+  }
 };
 
-// ================= SSO ME =================
+/**
+ * @desc    Get current user profile
+ * @route   GET /api/auth/me
+ */
 export const getMe = async (req, res) => {
-    try {
-        const token = req.cookies?.token;
+  try {
+    let sessionUser = req.user || null;
 
-        console.log("🍪 SSO CHECK - Cookie Token Found:", !!token);
-
-        if (!token) {
-            return res.status(200).json({ user: null, token: null });
-        }
-
-        let decoded;
-        try {
-            decoded = jwt.verify(token, process.env.JWT_SECRET);
-        } catch (err) {
-            console.log("❌ TOKEN INVALID:", err.message);
-            return res.status(200).json({ user: null, token: null });
-        }
-
-        console.log("✅ TOKEN DECODED:", decoded);
-
-        const userId = decoded.userId || decoded.id || decoded._id;
-
-        if (!userId) {
-            console.log("❌ No userId in token");
-            return res.status(200).json({ user: null, token: null });
-        }
-
-        const user = await User.findById(userId)
-            .populate("companyId")
-            .select("-password");
-
-        if (!user) {
-            console.log("❌ User not found in DB");
-            return res.status(200).json({ user: null, token: null });
-        }
-
-        console.log("✅ SSO USER FOUND:", user.email);
-
-        return res.json({
-            user,
-            token
-        });
-
-    } catch (err) {
-        console.log("❌ SSO ERROR:", err.message);
-        return res.status(200).json({ user: null, token: null });
+    if (!sessionUser && req.cookies?.sso_token) {
+      try {
+        sessionUser = jwt.verify(
+          req.cookies.sso_token,
+          process.env.JWT_SECRET || "fallback_secret"
+        );
+      } catch (_error) {
+        sessionUser = null;
+      }
     }
+
+    const userId = sessionUser?.id || sessionUser?.sub || null;
+    const userEmail = String(sessionUser?.email || "").trim().toLowerCase() || null;
+
+    if (!userId && !userEmail) {
+      return res.json({
+        authenticated: false,
+        user: null
+      });
+    }
+
+    let user = null;
+
+    if (userId) {
+      user = await User.findById(userId).select("-password").lean();
+    }
+
+    if (!user && userEmail) {
+      user = await User.findOne({ email: userEmail }).select("-password").lean();
+    }
+
+    if (!user) {
+      return res.json({
+        authenticated: true,
+        user: {
+          id: userId || null,
+          _id: userId || null,
+          email: userEmail,
+          name: sessionUser?.name || null,
+          role: sessionUser?.role || null,
+          companyId: sessionUser?.companyId || null,
+          tenantId: sessionUser?.tenantId || null,
+          companyCode: sessionUser?.companyCode || null,
+          products: Array.isArray(sessionUser?.products) ? sessionUser.products : [],
+          enabledModules: sessionUser?.enabledModules || {},
+          modules: Array.isArray(sessionUser?.modules) ? sessionUser.modules : [],
+          permissions: Array.isArray(sessionUser?.permissions) ? sessionUser.permissions : [],
+          tenant: null
+        }
+      });
+    }
+
+    let tenant = null;
+    if (user.tenantId) {
+      tenant = await Tenant.findById(user.tenantId).lean();
+    }
+
+    return res.json({
+      authenticated: true,
+      user: {
+        ...user,
+        tenant
+      }
+    });
+  } catch (error) {
+    console.error(`[SSO] getMe Error: ${error.message}`);
+    return res.status(500).json({ message: "Internal server error" });
+  }
 };
 
-// ================= LOGOUT =================
+/**
+ * @desc    Logout & clear cookie
+ */
 export const logout = async (req, res) => {
-    try {
-        res.clearCookie("token", {
-            httpOnly: true,
-            secure: false,
-            sameSite: "lax",
-            path: "/"
-        });
-
-        console.log("🚪 USER LOGGED OUT");
-
-        return res.json({
-            msg: "Logged out successfully"
-        });
-
-    } catch (err) {
-        return res.status(500).json({ msg: err.message });
-    }
+  revokeSessionToken(req.cookies?.sso_token);
+  const cookieOptions = getCookieOptions(req.headers.host);
+  res.clearCookie("sso_token", cookieOptions);
+  
+  const { redirect } = req.query;
+  if (redirect && (redirect.startsWith("http") || redirect.startsWith("/"))) {
+    return res.redirect(redirect);
+  }
+  
+  return res.json({ message: "Logged out successfully" });
 };
