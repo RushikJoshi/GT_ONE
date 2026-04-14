@@ -1,40 +1,90 @@
 import jwt from "jsonwebtoken";
-import User from "../models/User.js";
+import { ROLES } from "../constants/roles.js";
 
-// 🔥 Verify Token (Cookie-based SSO)
-export const verifyToken = (req, res, next) => {
-    try {
-        // ✅ GET TOKEN FROM COOKIE
-        const token = req.cookies.token;
+const getJwtSecret = () => process.env.JWT_SECRET || "fallback_secret";
 
-        if (!token) {
-            return res.status(401).json({ msg: "No token, authorization denied" });
-        }
+/**
+ * @desc    Middleware to verify sso_token cookie
+ */
+export const protect = async (req, res, next) => {
+  try {
+    const token = req.cookies?.sso_token;
+    console.log(`[AUTH] Checking token. Found: ${!!token}`);
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded;
-
-        next();
-    } catch (err) {
-        return res.status(401).json({ msg: "Token is invalid or expired" });
+    if (!token) {
+      return res.status(401).json({ message: "Not authorized, no token" });
     }
+
+    // Verify token
+    const decoded = jwt.verify(token, getJwtSecret());
+
+    // Attach user to request
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.warn(`[SSO] Auth Middleware Error: ${error.message}`);
+    return res.status(401).json({ message: "Not authorized, token failed" });
+  }
 };
 
-// 🔥 Admin Access
-export const isAdmin = (req, res, next) => {
-    try {
-        if (!req.user) {
-            return res.status(401).json({ msg: "Not authorized" });
-        }
+/**
+ * @desc    Middleware for session probe endpoints
+ *          Attaches req.user when the cookie is valid, otherwise continues unauthenticated.
+ */
+export const optionalProtect = async (req, _res, next) => {
+  try {
+    const token = req.cookies?.sso_token;
 
-        const { role } = req.user;
-
-        if (role === "admin" || role === "superadmin") {
-            next();
-        } else {
-            return res.status(403).json({ msg: "Access denied. Admin only." });
-        }
-    } catch (err) {
-        return res.status(500).json({ msg: "Server error in admin check" });
+    if (!token) {
+      req.user = null;
+      return next();
     }
+
+    const decoded = jwt.verify(token, getJwtSecret());
+    req.user = decoded;
+    return next();
+  } catch (error) {
+    console.warn(`[SSO] Optional auth skipped: ${error.message}`);
+    req.user = null;
+    return next();
+  }
+};
+
+/**
+ * @desc    Alias for protect (backward compatibility)
+ */
+export const verifyToken = protect;
+
+/**
+ * @desc    Middleware to restrict access based on roles
+ */
+export const authorizeRoles = (...roles) => {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ message: "Access denied: Unauthorized role" });
+    }
+    next();
+  };
+};
+
+/**
+ * @desc    Middleware to restrict access to Super Admin only
+ */
+export const superAdminOnly = (req, res, next) => {
+  if (req.user && req.user.role === ROLES.SUPER_ADMIN) {
+    next();
+  } else {
+    return res.status(403).json({ message: "Access denied: Super Admin only" });
+  }
+};
+
+/**
+ * @desc    Middleware to restrict access to Company Admin or Super Admin
+ */
+export const adminOnly = (req, res, next) => {
+  if (req.user && (req.user.role === ROLES.SUPER_ADMIN || req.user.role === ROLES.COMPANY_ADMIN)) {
+    next();
+  } else {
+    return res.status(403).json({ message: "Access denied: Admin only" });
+  }
 };

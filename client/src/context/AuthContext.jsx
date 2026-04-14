@@ -1,52 +1,57 @@
-import { createContext, useContext, useState, useEffect } from "react";
-import axios from "axios";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import api from "../lib/api";
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-    const [user, setUser] = useState(null);
-    const [token, setToken] = useState(null);
-    const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-    const login = async (newToken, userData) => {
-        setToken(newToken);
-        setUser(userData);
-        axios.defaults.headers.common["Authorization"] = `Bearer ${newToken}`;
-    };
+  const loadSession = async () => {
+    try {
+      const res = await api.get("/auth/me");
+      setUser(res.data.user || null);
+    } catch (error) {
+      // Any auth/session failure should simply fall back to logged-out state.
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const logout = async () => {
-        try {
-            await axios.post("/api/auth/logout");
-            setUser(null);
-            setToken(null);
-            delete axios.defaults.headers.common["Authorization"];
-        } catch (err) {
-            console.error("Logout error:", err);
-        }
-    };
+  useEffect(() => {
+    loadSession();
+  }, []);
 
-    // 🔥 Added to support automatic SSO checks
-    const restoreSession = async (ssoVerifyFn) => {
-        const { user, token } = await ssoVerifyFn();
-        if (user && token) {
-            await login(token, user);
-            return { user, token };
-        }
-        return { user: null, token: null };
-    };
+  const logout = async () => {
+    try {
+      await api.post("/auth/logout");
+    } catch (error) {
+      // Keep logout resilient even if the backend is temporarily unavailable.
+    } finally {
+      setUser(null);
+    }
+  };
 
-    return (
-        <AuthContext.Provider value={{ 
-            user, setUser, 
-            token, setToken, 
-            isAuthenticated: !!user, // 🔥 Boolean state
-            loading, setLoading, 
-            login, logout,
-            restoreSession // 🔥 Restore logic
-        }}>
-            {children}
-        </AuthContext.Provider>
-    );
+  const value = useMemo(
+    () => ({
+      user,
+      loading,
+      setUser,
+      reloadSession: loadSession,
+      logout,
+      isAuthenticated: Boolean(user)
+    }),
+    [user, loading]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth must be used inside AuthProvider");
+  }
+  return context;
+};

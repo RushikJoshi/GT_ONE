@@ -1,50 +1,42 @@
 import mongoose from "mongoose";
+import { ROLE_VALUES, ROLES } from "../constants/roles.js";
 
-const userSchema = new mongoose.Schema({
+const userSchema = new mongoose.Schema(
+  {
     name: {
-        type: String,
-        required: true,
-        trim: true
+      type: String,
+      required: true,
+      trim: true
     },
-
     email: {
-        type: String,
-        required: true,
-        unique: true,
-        lowercase: true,
-        trim: true
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true
     },
-
     password: {
-        type: String,
-        required: true
+      type: String,
+      required: true
     },
-
     role: {
-        type: String,
-        enum: ["superadmin", "admin", "user"],
-        default: "user"
+      type: String,
+      enum: ROLE_VALUES,
+      default: ROLES.EMPLOYEE
     },
-
     companyId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Company"
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      default: null
     },
-
-    // 🔥 IMPORTANT: App Access Control
-    allowedApps: {
-        type: [String],
-        default: []
-    },
-
-    // 🔐 Account Status
-    isActive: {
-        type: Boolean,
-        default: true
+    tenantId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tenant",
+      default: null
     }
-
-}, {
-    timestamps: true
-});
+  },
+  { timestamps: true }
+);
 
 export default mongoose.model("User", userSchema);
+

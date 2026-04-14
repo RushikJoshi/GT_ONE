@@ -1,32 +1,53 @@
 import mongoose from "mongoose";
+import {
+  createDefaultHrmsEnabledModules,
+  HRMS_MODULE_KEYS
+} from "../constants/hrmsModules.js";
 
-const companySchema = new mongoose.Schema({
+const companySchema = new mongoose.Schema(
+  {
     name: {
-        type: String,
-        required: true
+      type: String,
+      required: true,
+      trim: true
     },
-
     email: {
-        type: String,
-        required: true
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true
     },
-
-    plan: {
-        type: String,
-        enum: ["basic", "pro", "enterprise"],
-        default: "basic"
+    code: {
+      type: String,
+      default: null,
+      trim: true
     },
-
-    allowedApps: {
-        type: [String],
-        default: []
+    companyCode: {
+      type: String,
+      default: null,
+      trim: true
     },
-
-    isActive: {
-        type: Boolean,
-        default: true
+    hrmsTenantId: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    hrmsAdminUserId: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    hrmsEnabledModules: {
+      type: Object,
+      default: () => createDefaultHrmsEnabledModules()
+    },
+    hrmsModules: {
+      type: [String],
+      default: () => [...HRMS_MODULE_KEYS]
     }
-
-}, { timestamps: true });
+  },
+  { timestamps: true }
+);
 
 export default mongoose.model("Company", companySchema);

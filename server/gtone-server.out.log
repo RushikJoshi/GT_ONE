@@ -1,0 +1,100 @@
+◇ injecting env (19) from .env // tip: ⌘ override existing { override: true }
+[SSO] MongoDB Connected
+[SEED] SUPER_ADMIN already exists: admin@gitakshmi.com
+[SSO] System running on port 5004
+{"scope":"AUTH","event":"login_success","at":"2026-04-12T18:46:26.830Z","email":"hello@gmail.com","role":"COMPANY_ADMIN"}
+[SSO] HRMS modules loaded for company=69d527ce40a4cb81dbc4058b modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] hrms tenant resolved user=hello@gmail.com tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676 source=company_mapping
+{"scope":"AUTH","event":"jwt_generated","at":"2026-04-12T18:46:27.073Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","products":["HRMS","PMS"],"exp":1776105987}
+[SSO] jwt generated id=69d53340ba63159af3406c5f email=hello@gmail.com
+[SSO] HRMS modules injected into token userId=69d53340ba63159af3406c5f modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] jwt context tenantId=69d532bf973fa61b3a27b80a companyId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+[SSO] token mapped to HRMS tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+{"scope":"AUTH","event":"hrms_access_check","at":"2026-04-12T18:46:27.077Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","passed":true}
+{"scope":"AUTH","event":"hrms_role_redirect_selected","at":"2026-04-12T18:46:27.077Z","role":"COMPANY_ADMIN","path":"/tenant/admin-dashboard"}
+[SSO] resolved role userId=69d53340ba63159af3406c5f email=hello@gmail.com role=company_admin
+{"scope":"AUTH","event":"role_resolved","at":"2026-04-12T18:46:27.078Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","normalizedRole":"company_admin"}
+{"scope":"AUTH","event":"redirect_generated","at":"2026-04-12T18:46:27.078Z","role":"COMPANY_ADMIN","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+{"scope":"AUTH","event":"login_redirect_final","at":"2026-04-12T18:46:27.078Z","role":"COMPANY_ADMIN","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+[SSO] final redirect URL = http://localhost:5176/tenant/admin-dashboard
+[SSO] User logged in: hello@gmail.com, Role: COMPANY_ADMIN
+{"scope":"AUTH","event":"login_success","at":"2026-04-12T18:54:38.508Z","email":"hello@gmail.com","role":"COMPANY_ADMIN"}
+[SSO] HRMS modules loaded for company=69d527ce40a4cb81dbc4058b modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] hrms tenant resolved user=hello@gmail.com tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676 source=company_mapping
+{"scope":"AUTH","event":"jwt_generated","at":"2026-04-12T18:54:38.771Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","products":["HRMS","PMS"],"exp":1776106478}
+[SSO] jwt generated id=69d53340ba63159af3406c5f email=hello@gmail.com
+[SSO] HRMS modules injected into token userId=69d53340ba63159af3406c5f modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] jwt context tenantId=69d532bf973fa61b3a27b80a companyId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+[SSO] token mapped to HRMS tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+{"scope":"AUTH","event":"hrms_access_check","at":"2026-04-12T18:54:38.775Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","passed":true}
+{"scope":"AUTH","event":"hrms_role_redirect_selected","at":"2026-04-12T18:54:38.776Z","role":"COMPANY_ADMIN","path":"/tenant/admin-dashboard"}
+[SSO] resolved role userId=69d53340ba63159af3406c5f email=hello@gmail.com role=company_admin
+{"scope":"AUTH","event":"role_resolved","at":"2026-04-12T18:54:38.777Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","normalizedRole":"company_admin"}
+{"scope":"AUTH","event":"redirect_generated","at":"2026-04-12T18:54:38.778Z","role":"COMPANY_ADMIN","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+{"scope":"AUTH","event":"login_redirect_final","at":"2026-04-12T18:54:38.779Z","role":"COMPANY_ADMIN","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+[SSO] final redirect URL = http://localhost:5176/tenant/admin-dashboard
+[SSO] User logged in: hello@gmail.com, Role: COMPANY_ADMIN
+{"scope":"AUTH","event":"login_success","at":"2026-04-12T18:56:11.548Z","email":"hello@gmail.com","role":"COMPANY_ADMIN"}
+[SSO] HRMS modules loaded for company=69d527ce40a4cb81dbc4058b modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] hrms tenant resolved user=hello@gmail.com tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676 source=company_mapping
+{"scope":"AUTH","event":"jwt_generated","at":"2026-04-12T18:56:11.804Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","products":["HRMS","PMS"],"exp":1776106571}
+[SSO] jwt generated id=69d53340ba63159af3406c5f email=hello@gmail.com
+[SSO] HRMS modules injected into token userId=69d53340ba63159af3406c5f modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] jwt context tenantId=69d532bf973fa61b3a27b80a companyId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+[SSO] token mapped to HRMS tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+{"scope":"AUTH","event":"hrms_access_check","at":"2026-04-12T18:56:11.806Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","passed":true}
+{"scope":"AUTH","event":"hrms_role_redirect_selected","at":"2026-04-12T18:56:11.807Z","role":"COMPANY_ADMIN","path":"/tenant/admin-dashboard"}
+[SSO] resolved role userId=69d53340ba63159af3406c5f email=hello@gmail.com role=company_admin
+{"scope":"AUTH","event":"role_resolved","at":"2026-04-12T18:56:11.808Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","normalizedRole":"company_admin"}
+{"scope":"AUTH","event":"redirect_generated","at":"2026-04-12T18:56:11.808Z","role":"COMPANY_ADMIN","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+{"scope":"AUTH","event":"login_redirect_final","at":"2026-04-12T18:56:11.809Z","role":"COMPANY_ADMIN","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+[SSO] final redirect URL = http://localhost:5176/tenant/admin-dashboard
+[SSO] User logged in: hello@gmail.com, Role: COMPANY_ADMIN
+{"scope":"AUTH","event":"login_success","at":"2026-04-12T18:58:28.171Z","email":"hello@gmail.com","role":"COMPANY_ADMIN"}
+[SSO] HRMS modules loaded for company=69d527ce40a4cb81dbc4058b modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] hrms tenant resolved user=hello@gmail.com tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676 source=company_mapping
+{"scope":"AUTH","event":"jwt_generated","at":"2026-04-12T18:58:28.486Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","products":["HRMS","PMS"],"exp":1776106708}
+[SSO] jwt generated id=69d53340ba63159af3406c5f email=hello@gmail.com
+[SSO] HRMS modules injected into token userId=69d53340ba63159af3406c5f modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] jwt context tenantId=69d532bf973fa61b3a27b80a companyId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+[SSO] token mapped to HRMS tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+{"scope":"AUTH","event":"hrms_access_check","at":"2026-04-12T18:58:28.489Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","passed":true}
+{"scope":"AUTH","event":"hrms_role_redirect_selected","at":"2026-04-12T18:58:28.489Z","role":"COMPANY_ADMIN","path":"/tenant/admin-dashboard"}
+[SSO] resolved role userId=69d53340ba63159af3406c5f email=hello@gmail.com role=company_admin
+{"scope":"AUTH","event":"role_resolved","at":"2026-04-12T18:58:28.490Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","normalizedRole":"company_admin"}
+{"scope":"AUTH","event":"redirect_generated","at":"2026-04-12T18:58:28.490Z","role":"COMPANY_ADMIN","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+{"scope":"AUTH","event":"login_redirect_final","at":"2026-04-12T18:58:28.491Z","role":"COMPANY_ADMIN","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+[SSO] final redirect URL = http://localhost:5176/tenant/admin-dashboard
+[SSO] User logged in: hello@gmail.com, Role: COMPANY_ADMIN
+{"scope":"AUTH","event":"login_success","at":"2026-04-12T18:59:32.492Z","email":"hello@gmail.com","role":"COMPANY_ADMIN"}
+[SSO] HRMS modules loaded for company=69d527ce40a4cb81dbc4058b modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] hrms tenant resolved user=hello@gmail.com tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676 source=company_mapping
+{"scope":"AUTH","event":"jwt_generated","at":"2026-04-12T18:59:32.725Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","products":["HRMS","PMS"],"exp":1776106772}
+[SSO] jwt generated id=69d53340ba63159af3406c5f email=hello@gmail.com
+[SSO] HRMS modules injected into token userId=69d53340ba63159af3406c5f modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] jwt context tenantId=69d532bf973fa61b3a27b80a companyId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+[SSO] token mapped to HRMS tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+{"scope":"AUTH","event":"hrms_access_check","at":"2026-04-12T18:59:32.727Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","passed":true}
+{"scope":"AUTH","event":"hrms_role_redirect_selected","at":"2026-04-12T18:59:32.728Z","role":"COMPANY_ADMIN","path":"/tenant/admin-dashboard"}
+[SSO] resolved role userId=69d53340ba63159af3406c5f email=hello@gmail.com role=company_admin
+{"scope":"AUTH","event":"role_resolved","at":"2026-04-12T18:59:32.729Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","normalizedRole":"company_admin"}
+{"scope":"AUTH","event":"redirect_generated","at":"2026-04-12T18:59:32.730Z","role":"COMPANY_ADMIN","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+{"scope":"AUTH","event":"login_redirect_final","at":"2026-04-12T18:59:32.730Z","role":"COMPANY_ADMIN","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+[SSO] final redirect URL = http://localhost:5176/tenant/admin-dashboard
+[SSO] User logged in: hello@gmail.com, Role: COMPANY_ADMIN
+{"scope":"AUTH","event":"login_success","at":"2026-04-12T19:00:28.924Z","email":"hello@gmail.com","role":"COMPANY_ADMIN"}
+[SSO] HRMS modules loaded for company=69d527ce40a4cb81dbc4058b modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] hrms tenant resolved user=hello@gmail.com tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676 source=company_mapping
+{"scope":"AUTH","event":"jwt_generated","at":"2026-04-12T19:00:29.162Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","products":["HRMS","PMS"],"exp":1776106829}
+[SSO] jwt generated id=69d53340ba63159af3406c5f email=hello@gmail.com
+[SSO] HRMS modules injected into token userId=69d53340ba63159af3406c5f modules=hr,attendance,leave,payroll,recruitment,backgroundVerification,documentManagement,employeePortal,socialMediaIntegration,reports
+[SSO] jwt context tenantId=69d532bf973fa61b3a27b80a companyId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+[SSO] token mapped to HRMS tenantId=69d532bf973fa61b3a27b80a companyCode=TEST8676
+{"scope":"AUTH","event":"hrms_access_check","at":"2026-04-12T19:00:29.165Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","passed":true}
+{"scope":"AUTH","event":"hrms_role_redirect_selected","at":"2026-04-12T19:00:29.166Z","role":"COMPANY_ADMIN","path":"/tenant/admin-dashboard"}
+[SSO] resolved role userId=69d53340ba63159af3406c5f email=hello@gmail.com role=company_admin
+{"scope":"AUTH","event":"role_resolved","at":"2026-04-12T19:00:29.167Z","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","role":"COMPANY_ADMIN","normalizedRole":"company_admin"}
+{"scope":"AUTH","event":"redirect_generated","at":"2026-04-12T19:00:29.167Z","role":"COMPANY_ADMIN","userId":"69d53340ba63159af3406c5f","email":"hello@gmail.com","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+{"scope":"AUTH","event":"login_redirect_final","at":"2026-04-12T19:00:29.168Z","role":"COMPANY_ADMIN","redirectTo":"http://localhost:5176/tenant/admin-dashboard"}
+[SSO] final redirect URL = http://localhost:5176/tenant/admin-dashboard
+[SSO] User logged in: hello@gmail.com, Role: COMPANY_ADMIN

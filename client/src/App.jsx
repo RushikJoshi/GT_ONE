@@ -1,75 +1,75 @@
-import './App.css'
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
-import { useEffect } from "react";
-import Login from "./pages/Login";
+import { Navigate, Route, Routes } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
-import { AuthProvider, useAuth } from "./context/AuthContext";
-import { verifySSO } from "./utils/verifySSO";
-import SessionGuard from "./components/SessionGuard";
+import Login from "./pages/Login";
+import Logout from "./pages/Logout";
+import AssignProducts from "./pages/AssignProducts";
+import { useAuth } from "./context/AuthContext";
 
-function MainApp() {
-  const { login, restoreSession, user, loading, setLoading } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  useEffect(() => {
-    const checkSSO = async () => {
-      try {
-        setLoading(true);
-        // 🔥 Use the restoreSession from context
-        const { user: ssoUser } = await restoreSession(verifySSO);
-
-        if (ssoUser) {
-          console.log("🔥 SSO Session Found - Logged in automatically.");
-          // If already authenticated and at login, push to dashboard
-          if (location.pathname === "/login" || location.pathname === "/") {
-            navigate("/dashboard");
-          }
-        }
-      } catch (err) {
-        console.error("SSO check failed:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    checkSSO();
-  }, []);
+const ProtectedRoute = ({ children }) => {
+  const { user, loading } = useAuth();
 
   if (loading) {
+    return <div className="center-screen">Checking session...</div>;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+};
+
+const SuperAdminRoute = ({ children }) => {
+  const { user } = useAuth();
+  const normalizedRole = String(user?.role || "").trim().toLowerCase();
+  const normalizedEmail = String(user?.email || "").trim().toLowerCase();
+  const isSuperAdminUser =
+    normalizedRole === "super_admin" ||
+    normalizedRole === "superadmin" ||
+    normalizedEmail === "admin@gitakshmi.com";
+
+  if (!isSuperAdminUser) {
     return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", background: "#f8fafc" }}>
-        <div style={{ textAlign: "center" }}>
-          <div className="spinner" style={{ marginBottom: "20px" }}></div>
-          <h3 style={{ color: "#64748b", fontFamily: "Outfit, sans-serif" }}>Verifying Single Sign-On...</h3>
+      <div className="center-screen">
+        <div className="card simple-card">
+          <h2>Access Denied</h2>
+          <p>This panel is available only for super admin users.</p>
         </div>
       </div>
     );
   }
 
-  return (
-    <Routes>
-      <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Navigate to="/login" />} />
-      <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login />} />
-      
-      <Route path="/dashboard" element={
-        <SessionGuard>
-          <Dashboard />
-        </SessionGuard>
-      } />
-
-      <Route path="*" element={<Navigate to="/" />} />
-    </Routes>
-  );
-}
+  return children;
+};
 
 function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <MainApp />
-      </AuthProvider>
-    </BrowserRouter>
+    <Routes>
+      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/logout" element={<Logout />} />
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedRoute>
+            <SuperAdminRoute>
+              <Dashboard />
+            </SuperAdminRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/companies/:companyId/products"
+        element={
+          <ProtectedRoute>
+            <SuperAdminRoute>
+              <AssignProducts />
+            </SuperAdminRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route path="*" element={<Navigate to="/login" replace />} />
+    </Routes>
   );
 }
 

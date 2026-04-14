@@ -1,95 +1,199 @@
-import { useState } from "react";
-import axios from "axios";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import api from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
-// 🔥 Ensure cookies are sent
-axios.defaults.withCredentials = true;
-
 function Login() {
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [loading, setLoading] = useState(false);
-    const { login } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { setUser } = useAuth();
+  const resolveFallbackRedirect = (role) => {
+    const normalizedRole = String(role || "").trim().toLowerCase();
 
-    const handleLogin = async () => {
-        if (!email || !password) {
-            alert("Please enter email and password");
-            return;
+    const HRMS_BASE = "http://localhost:5176";
+
+    if (["company_admin", "admin", "hr", "hr_admin", "owner"].includes(normalizedRole)) {
+      return `${HRMS_BASE}/tenant/admin-dashboard`;
+    }
+
+    if (["manager", "team_manager"].includes(normalizedRole)) {
+      return `${HRMS_BASE}/tenant/dashboard`;
+    }
+
+    if (["employee", "user", "staff"].includes(normalizedRole)) {
+      return `${HRMS_BASE}/employee/dashboard`;
+    }
+
+    if (["super_admin", "superadmin", "psa"].includes(normalizedRole)) {
+      return `${HRMS_BASE}/tenant/dashboard`;
+    }
+
+    return null;
+  };
+  const redirect = useMemo(
+    () => searchParams.get("redirect") || "",
+    [searchParams]
+  );
+  const hasExplicitRedirectUrl = useMemo(
+    () => typeof redirect === "string" && /^https?:\/\//i.test(redirect),
+    [redirect]
+  );
+
+  const [form, setForm] = useState({
+    email: "",
+    password: ""
+  });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+
+    const redirectAuthenticatedUser = async () => {
+      try {
+        const res = await api.get("/auth/me");
+        if (!active || !res.data?.authenticated || !res.data?.user) {
+          return;
         }
 
-        try {
-            setLoading(true);
+        const nextUser = res.data.user;
+        setUser(nextUser);
 
-            // ✅ 🔥 CALL SSO BACKEND DIRECTLY (MAIN FIX)
-            const res = await axios.post(
-                "http://localhost:5000/api/auth/login", // ⚠️ CHANGE PORT IF DIFFERENT
-                { email, password },
-                { withCredentials: true }
-            );
-
-            console.log("✅ Login success:", res.data);
-
-            const { user, token, redirect } = res.data;
-
-            // 🔥 Sync SSO context (optional but good)
-            if (token && user) {
-                await login(token, user);
-            }
-
-            console.log("🔁 Redirecting to:", redirect);
-
-            // ✅ 🔥 REDIRECT TO CRM
-            window.location.href = redirect || "http://localhost:5173";
-
-        } catch (err) {
-            console.error("❌ Login error:", err);
-            alert(err?.response?.data?.msg || "Login failed");
-        } finally {
-            setLoading(false);
+        if (hasExplicitRedirectUrl) {
+          window.location.replace(redirect);
+          return;
         }
+
+        const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
+        if (normalizedRole === "super_admin") {
+          navigate("/dashboard", { replace: true });
+          return;
+        }
+
+        const roleRedirect = resolveFallbackRedirect(normalizedRole);
+        if (roleRedirect) {
+          window.location.replace(roleRedirect);
+          return;
+        }
+
+      } catch (_error) {
+        // No active SSO session; keep the login form visible.
+      } finally {
+        if (active) {
+          setCheckingSession(false);
+        }
+      }
     };
 
+    void redirectAuthenticatedUser();
+
+    return () => {
+      active = false;
+    };
+  }, [hasExplicitRedirectUrl, navigate, redirect, setUser]);
+
+  if (checkingSession) {
     return (
-        <div style={{ padding: 50, textAlign: "center", fontFamily: "Segoe UI, sans-serif" }}>
-            <div style={{ maxWidth: 400, margin: "auto", background: "white", padding: 40, borderRadius: 10, boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
-                <h2>SSO Login</h2>
-                <p style={{ color: "#666", marginBottom: 30 }}>Access your CRM centrally</p>
-
-                <div style={{ textAlign: "left", marginBottom: 20 }}>
-                    <label>Email</label>
-                    <input
-                        style={{ width: "100%", padding: 12, marginTop: 5, borderRadius: 5, border: "1px solid #ddd" }}
-                        placeholder="admin@example.com"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                    />
-                </div>
-
-                <div style={{ textAlign: "left", marginBottom: 30 }}>
-                    <label>Password</label>
-                    <input
-                        type="password"
-                        style={{ width: "100%", padding: 12, marginTop: 5, borderRadius: 5, border: "1px solid #ddd" }}
-                        placeholder="••••••••"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                    />
-                </div>
-
-                <button
-                    onClick={handleLogin}
-                    disabled={loading}
-                    style={{ width: "100%", padding: 14, background: "#007bff", color: "white", border: "none", borderRadius: 5, cursor: "pointer", fontSize: 16, fontWeight: "bold" }}
-                >
-                    {loading ? "Verifying..." : "Sign In"}
-                </button>
-
-                <p style={{ marginTop: 20, fontSize: 14, color: "#999" }}>
-                    © 2026 Central SSO Identity Provider
-                </p>
-            </div>
+      <div className="center-screen">
+        <div className="card simple-card">
+          <h2>Checking Session...</h2>
+          <p>Verifying your GT ONE sign-in.</p>
         </div>
+      </div>
     );
+  }
+
+  const onChange = (event) => {
+    const { name, value } = event.target;
+    setForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (loading) {
+      return;
+    }
+
+    setError("");
+    console.log("[SSO-FE] submit start");
+
+    try {
+      setLoading(true);
+      const query = redirect ? `?redirect=${encodeURIComponent(redirect)}` : "";
+      const payload = {
+        email: form.email.trim().toLowerCase(),
+        password: form.password.trim()
+      };
+      const res = await api.post(`/auth/login${query}`, payload);
+      const nextUser = res.data.user;
+      setUser(nextUser);
+      console.log("[SSO-FE] login success");
+      const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
+
+      if (normalizedRole === "super_admin" && !hasExplicitRedirectUrl) {
+        navigate("/dashboard", { replace: true });
+        return;
+      }
+
+      const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
+
+      if (typeof redirectUrl === "string" && redirectUrl.startsWith("http")) {
+        console.log(`[SSO-FE] redirecting to ${redirectUrl}`);
+        window.location.assign(redirectUrl);
+        return;
+      }
+
+      const fallbackRedirect = resolveFallbackRedirect(normalizedRole);
+      if (fallbackRedirect) {
+        window.location.assign(fallbackRedirect);
+        return;
+      }
+
+      setError("Login successful, but no app redirect is configured for this user yet.");
+      console.log("[SSO-FE] login incomplete: redirect URL missing.");
+    } catch (requestError) {
+      const message = requestError?.response?.data?.message || "Login failed";
+      setError(message);
+      console.log(`[SSO-FE] login failed: ${message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="center-screen">
+      <form className="card" onSubmit={handleSubmit}>
+        <h1>GT ONE Login</h1>
+        <p className="muted">Central SSO authentication system</p>
+
+        <label>Email</label>
+        <input
+          type="email"
+          name="email"
+          value={form.email}
+          onChange={onChange}
+          required
+        />
+
+        <label>Password</label>
+        <input
+          type="password"
+          name="password"
+          value={form.password}
+          onChange={onChange}
+          required
+        />
+
+        {redirect && <p className="muted">Redirect target: {redirect.toUpperCase()}</p>}
+        {error && <p className="error">{error}</p>}
+
+        <button type="submit" disabled={loading}>
+          {loading ? "Signing in..." : "Sign In"}
+        </button>
+      </form>
+    </div>
+  );
 }
 
 export default Login;
