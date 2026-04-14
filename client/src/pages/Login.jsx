@@ -124,6 +124,7 @@ function Login() {
       setLoading(true);
       const query = redirect ? `?redirect=${encodeURIComponent(redirect)}` : "";
       const payload = {
+        identifier: form.email.trim(),
         email: form.email.trim().toLowerCase(),
         password: form.password.trim()
       };

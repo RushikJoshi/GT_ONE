@@ -711,12 +711,39 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
   return null;
 };
 
-export const validateLogin = async ({ email, password }) => {
-  const normalizedEmail = email?.trim()?.toLowerCase();
-  const normalizedPassword = password?.trim();
+const getHrmsAuthBaseUrl = () => {
+  const explicit = String(process.env.HRMS_AUTH_BASE_URL || "").trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
 
-  if (!normalizedEmail || !normalizedPassword) {
-    return { error: { status: 400, message: "Email and password are required" } };
+  // Derive from provision URL when available (e.g. http://localhost:5003/api/sso/provision-tenant)
+  const provision = String(process.env.HRMS_PROVISION_URL || "").trim();
+  if (provision) {
+    try {
+      const u = new URL(provision);
+      return `${u.protocol}//${u.host}`;
+    } catch {
+      // ignore
+    }
+  }
+
+  return "http://localhost:5001";
+};
+
+const isEmailLike = (value) => String(value || "").includes("@");
+
+async function tryExternalHrmsLogin({ identifier, password }) {
+  const base = getHrmsAuthBaseUrl();
+  const res = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identifier, password })
+  });
+
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (_e) {
+    data = null;
   }
 
   // 1. Check SSO User collection first (admin/HR users)

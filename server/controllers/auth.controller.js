@@ -14,10 +14,11 @@ import {
  */
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const { email, identifier, password } = req.body || {};
     const { redirect } = req.query;
 
-    const validation = await validateLogin({ email, password });
+    const resolvedIdentifier = String(identifier || email || "").trim();
+    const validation = await validateLogin({ identifier: resolvedIdentifier, password });
     if (validation.error) {
       return res.status(validation.error.status).json({ message: validation.error.message });
     }
