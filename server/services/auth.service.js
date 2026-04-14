@@ -731,19 +731,12 @@ const getHrmsAuthBaseUrl = () => {
 
 const isEmailLike = (value) => String(value || "").includes("@");
 
-async function tryExternalHrmsLogin({ identifier, password }) {
-  const base = getHrmsAuthBaseUrl();
-  const res = await fetch(`${base}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ identifier, password })
-  });
+export const validateLogin = async ({ identifier, password }) => {
+  const normalizedEmail = String(identifier || "").trim().toLowerCase();
+  const normalizedPassword = String(password || "");
 
-  let data = null;
-  try {
-    data = await res.json();
-  } catch (_e) {
-    data = null;
+  if (!normalizedEmail || !normalizedPassword) {
+    return { error: { status: 400, message: "Email and password are required" } };
   }
 
   // 1. Check SSO User collection first (admin/HR users)
