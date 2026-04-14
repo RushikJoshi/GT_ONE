@@ -608,7 +608,15 @@ export const resolveUserProducts = async (user) => {
     const allProducts = await Product.find({}, "name").lean();
     return allProducts.map((item) => item.name);
   }
-  return getCompanyProducts(user.companyId);
+
+  const products = await getCompanyProducts(user.companyId);
+
+  // If this is an HRMS employee, they must have HRMS access
+  if (user?._source === "hrms_employee" && !products.includes("HRMS")) {
+    products.push("HRMS");
+  }
+
+  return products;
 };
 
 export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }) => {
@@ -711,24 +719,126 @@ export const validateLogin = async ({ email, password }) => {
     return { error: { status: 400, message: "Email and password are required" } };
   }
 
-  const user = await User.findOne({ email: normalizedEmail });
-  if (!user) {
+  // 1. Check SSO User collection first (admin/HR users)
+  const ssoUser = await User.findOne({ email: normalizedEmail });
+  if (ssoUser) {
+    const isPasswordValid = await bcrypt.compare(normalizedPassword, ssoUser.password);
+    if (isPasswordValid) {
+      logAuth("login_success", { email: normalizedEmail, role: ssoUser.role, source: "sso_user" });
+      return { user: ssoUser };
+    }
+    // If password failed here, we fall through to check specific tenant databases below
+    logAuth("sso_password_mismatch_trying_fallback", { email: normalizedEmail });
+  }
+
+  // 2. Fallback: Check HRMS Tenant Databases (Multi-tenant isolation)
+  try {
+    console.log(`[SSO] Starting multi-database fallback for ${normalizedEmail}`);
+    const client = mongoose.connection.client;
+    if (!client) {
+      console.error("[SSO] MongoDB client not initialized");
+      return { error: { status: 500, message: "Database connection initializing. Please try again in a moment." } };
+    }
+
+    const centralDb = client.db("hrms");
+    
+    // Get list of tenant IDs to check
+    let tenantIds = [];
+    try {
+      console.log("[SSO] Discovering tenant databases...");
+      const admin = client.db("admin").admin();
+      const dbs = await admin.listDatabases();
+      tenantIds = dbs.databases
+        .map(db => db.name)
+        .filter(name => name.startsWith("company_"))
+        .map(name => name.replace("company_", ""));
+      console.log(`[SSO] Found ${tenantIds.length} physical tenant databases`);
+    } catch (adminErr) {
+      console.warn("[SSO] listDatabases permission denied, falling back to tenants collection");
+      const tenants = await centralDb.collection("tenants").find({}).toArray();
+      tenantIds = tenants.map(t => String(t._id));
+      console.log(`[SSO] Found ${tenantIds.length} tenants via central registry`);
+    }
+
+    for (const tenantId of tenantIds) {
+      const dbName = `company_${tenantId}`;
+      console.log(`[SSO] Checking database: ${dbName}`);
+      const tenantDb = client.db(dbName);
+      let employee;
+      try {
+        employee = await tenantDb.collection("employees").findOne({
+          email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }
+        });
+      } catch (e) { 
+        console.error(`[SSO] Failed to query ${dbName}: ${e.message}`);
+        continue; 
+      }
+
+      if (employee && employee.password) {
+        console.log(`[SSO] User found in ${dbName}, verifying password...`);
+        const isPasswordValid = await bcrypt.compare(normalizedPassword, employee.password);
+        if (!isPasswordValid) {
+          console.log(`[SSO] Password mismatch in ${dbName}`);
+          continue;
+        }
+
+        // Found a match
+        console.log(`[SSO] Password verified successfully in ${dbName}`);
+        let companyId = tenantId;
+        try {
+          const tenantRegistry = await centralDb.collection("tenants").findOne({ 
+            _id: mongoose.Types.ObjectId.isValid(tenantId) ? new mongoose.Types.ObjectId(tenantId) : tenantId 
+          });
+          if (tenantRegistry) {
+            companyId = String(tenantRegistry.externalCompanyId || tenantRegistry.companyId || tenantRegistry._id);
+          }
+        } catch (regErr) { /* ignore registry lookup error */ }
+
+        const firstName = String(employee.firstName || "").trim();
+        const lastName = String(employee.lastName || "").trim();
+        const fullName = [firstName, lastName].filter(Boolean).join(" ") || normalizedEmail.split("@")[0];
+        const empRole = String(employee.role || "employee").toLowerCase().trim();
+
+        const virtualUser = {
+          _id: employee._id,
+          id: String(employee._id),
+          name: fullName,
+          email: String(employee.email || "").toLowerCase().trim(),
+          role: empRole,
+          companyId: mongoose.Types.ObjectId.isValid(companyId) ? new mongoose.Types.ObjectId(companyId) : null,
+          tenantId: mongoose.Types.ObjectId.isValid(tenantId) ? new mongoose.Types.ObjectId(tenantId) : null,
+          permissions: [],
+          _source: "hrms_employee",
+          _tenantId: tenantId,
+          _companyId: companyId,
+        };
+
+        logAuth("login_success", { email: normalizedEmail, role: empRole, source: "hrms_employee", tenantId });
+        return { user: virtualUser };
+      }
+    }
+
+    console.log(`[SSO] No match found in any database for ${normalizedEmail}`);
     logAuth("login_failed", { reason: "user_not_found", email: normalizedEmail });
-    return { error: { status: 401, message: "User not found" } };
+    return { error: { status: 401, message: "Invalid email or password" } };
+  } catch (empErr) {
+    console.error(`[SSO] CRITICAL_AUTH_FAILURE: ${empErr.message}`);
+    if (empErr.stack) console.error(empErr.stack);
+    return { error: { status: 500, message: "Internal server error. Please try again." } };
   }
-
-  const isPasswordValid = await bcrypt.compare(normalizedPassword, user.password);
-  if (!isPasswordValid) {
-    logAuth("login_failed", { reason: "password_mismatch", email: normalizedEmail });
-    return { error: { status: 401, message: "Invalid password" } };
-  }
-
-  logAuth("login_success", { email: normalizedEmail, role: user.role });
-  return { user };
 };
 
 export const getLoginResponseData = async ({ user, redirect, requestOrigin }) => {
-  const latestUser = await User.findById(user._id).lean();
+  try {
+    let latestUser = null;
+
+  if (user?._source === "hrms_employee") {
+    // If it's a virtual user resolved from HRMS Employee collection, use it directly
+    latestUser = user;
+  } else {
+    // Otherwise look up in SSO User collection
+    latestUser = await User.findById(user._id).lean();
+  }
 
   if (!latestUser) {
     return { error: { status: 401, message: "User not found" } };
@@ -763,45 +873,54 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
     }
     return normalizeAppName(redirect || "hrms")?.toUpperCase() || "HRMS";
   })();
-  const tenantContext = await resolveHrmsTenantContext({
-    company,
-    user: latestUser,
-    products: normalizedProducts
-  });
-  const normalizedCompanyCode = String(tenantContext.companyCode || "").trim();
-  const hrmsTenantId = tenantContext.tenantId ? String(tenantContext.tenantId) : null;
-  const hrmsCompanyId = tenantContext.companyId ? String(tenantContext.companyId) : null;
-  const tmsCompanyId = String(company?._id || latestUser.companyId || "").trim() || null;
-  const effectiveHrmsTenantId = hrmsTenantId || tmsCompanyId;
-  const effectiveHrmsCompanyId = hrmsCompanyId || tmsCompanyId;
-  const tenantId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsTenantId;
-  const companyId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsCompanyId;
-  const extraClaims = requestedApp === "TMS" && tmsCompanyId
+  let tenantId, companyId, normalizedCompanyCode;
+
+  if (latestUser._source === "hrms_employee") {
+    tenantId = String(latestUser._tenantId || latestUser.tenantId || "");
+    companyId = String(latestUser._companyId || latestUser.companyId || "");
+    normalizedCompanyCode = String(latestUser.companyCode || "").trim();
+  } else {
+    const tenantContext = await resolveHrmsTenantContext({
+      company,
+      user: latestUser,
+      products: normalizedProducts
+    });
+    normalizedCompanyCode = String(tenantContext.companyCode || "").trim();
+    const hrmsTenantId = tenantContext.tenantId ? String(tenantContext.tenantId) : null;
+    const hrmsCompanyId = tenantContext.companyId ? String(tenantContext.companyId) : null;
+    const tmsCompanyId = String(company?._id || latestUser.companyId || "").trim() || null;
+    const effectiveHrmsTenantId = hrmsTenantId || tmsCompanyId;
+    const effectiveHrmsCompanyId = hrmsCompanyId || tmsCompanyId;
+    tenantId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsTenantId;
+    companyId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsCompanyId;
+
+    if (requestedApp === "HRMS" && !isSuperRole(roleFromDb)) {
+      if (!tenantId || !companyId) {
+        logAuth("tenant_mapping_missing", {
+          userId: String(latestUser._id),
+          email: latestUser.email,
+          companyId: String(company?._id || ""),
+          companyCode: normalizedCompanyCode || null,
+          reason: tenantContext.reason || "unknown",
+          provisioningStatus: tenantContext.provisioningStatus || null
+        });
+        console.error(
+          `[SSO] HRMS tenant mapping missing user=${latestUser.email} company=${String(company?._id || "")} reason=${tenantContext.reason || "unknown"}`
+        );
+      }
+    }
+  }
+
+  const extraClaims = requestedApp === "TMS" && companyId
     ? {
-        orgId: tmsCompanyId,
+        orgId: companyId,
         workspaceId: null
       }
     : {};
 
-  if (requestedApp === "HRMS" && !isSuperRole(roleFromDb)) {
-    if (!tenantId || !companyId) {
-      logAuth("tenant_mapping_missing", {
-        userId: String(latestUser._id),
-        email: latestUser.email,
-        companyId: String(company?._id || ""),
-        companyCode: normalizedCompanyCode || null,
-        reason: tenantContext.reason || "unknown",
-        provisioningStatus: tenantContext.provisioningStatus || null
-      });
-      console.error(
-        `[SSO] HRMS tenant mapping missing user=${latestUser.email} company=${String(company?._id || "")} reason=${tenantContext.reason || "unknown"}`
-      );
-    }
-  }
-
-  console.log(
-    `[SSO] hrms tenant resolved user=${latestUser.email} tenantId=${tenantId || "N/A"} companyCode=${normalizedCompanyCode || "N/A"} source=${tenantContext.source || "unknown"}`
-  );
+    console.log(
+      `[SSO] hrms tenant resolved user=${latestUser.email} tenantId=${tenantId || "N/A"} companyCode=${normalizedCompanyCode || "N/A"} source=${latestUser._source || "sso"}`
+    );
 
   let token;
   try {
@@ -894,21 +1013,24 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
     console.log(`[SSO] final redirect URL = ${redirectTo}`);
   }
 
-  return {
-    token,
-    redirectTo,
-    payloadUser: {
-      id: latestUser._id,
-      name: latestUser.name,
-      email: latestUser.email,
-      role: roleFromDb,
-      companyId: latestUser.companyId,
-      company,
-      products: normalizedProducts,
-      enabledModules: hrmsModuleSettings.hrmsEnabledModules,
-      modules: hrmsModuleSettings.hrmsModules
-    }
-  };
+    return {
+      token,
+      redirectTo,
+      payloadUser: {
+        id: String(latestUser._id),
+        email: latestUser.email,
+        name: latestUser.name,
+        role: roleFromDb,
+        products: normalizedProducts,
+        companyId: companyId || null,
+        tenantId: tenantId || null
+      }
+    };
+  } catch (globalErr) {
+    console.error(`[SSO] GLOBAL_RESPONSE_ERROR: ${globalErr.message}`);
+    if (globalErr.stack) console.error(globalErr.stack);
+    return { error: { status: 500, message: "Internal server error during session creation. Please contact support." } };
+  }
 };
 
 export const verifyJwtWithContract = ({ token, audience }) => {

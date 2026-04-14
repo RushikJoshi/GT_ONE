@@ -45,7 +45,16 @@ const SuperAdminRoute = ({ children }) => {
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <SuperAdminRoute>
+              <Dashboard />
+            </SuperAdminRoute>
+          </ProtectedRoute>
+        }
+      />
       <Route path="/login" element={<Login />} />
       <Route path="/logout" element={<Logout />} />
       <Route
