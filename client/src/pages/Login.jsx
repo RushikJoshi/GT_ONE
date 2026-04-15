@@ -99,10 +99,10 @@ function Login() {
             <p>Verifying your session...</p>
           </div>
           <div style={{ display: 'flex', justifyContent: 'center', padding: '20px' }}>
-             <svg className="animate-spin" width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="12" cy="12" r="10" stroke="#e2e8f0" strokeWidth="4" />
-                <path d="M12 2C6.47715 2 2 6.47715 2 12C2 13.5997 2.37562 15.1116 3.0434 16.4527" stroke="#2563eb" strokeWidth="4" strokeLinecap="round" />
-             </svg>
+            <svg className="animate-spin" width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="#e2e8f0" strokeWidth="4" />
+              <path d="M12 2C6.47715 2 2 6.47715 2 12C2 13.5997 2.37562 15.1116 3.0434 16.4527" stroke="#2563eb" strokeWidth="4" strokeLinecap="round" />
+            </svg>
           </div>
         </div>
       </div>
@@ -131,7 +131,7 @@ function Login() {
       const res = await api.post(`/auth/login${query}`, payload);
       const nextUser = res.data.user;
       setUser(nextUser);
-      
+
       const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
 
       if (["super_admin", "superadmin", "psa"].includes(normalizedRole) && !hasExplicitRedirectUrl) {
@@ -167,7 +167,7 @@ function Login() {
         <div className="branding-content">
           <h1>GT ONE</h1>
           <p>Your unified gateway to enterprise management. Secure, seamless, and powerful.</p>
-          
+
           <div className="branding-features">
             <div className="feature-item">
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="24" height="24">
