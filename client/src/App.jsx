@@ -29,14 +29,7 @@ const SuperAdminRoute = ({ children }) => {
     normalizedEmail === "admin@gitakshmi.com";
 
   if (!isSuperAdminUser) {
-    return (
-      <div className="center-screen">
-        <div className="card simple-card">
-          <h2>Access Denied</h2>
-          <p>This panel is available only for super admin users.</p>
-        </div>
-      </div>
-    );
+    return <Navigate to="/login" replace />;
   }
 
   return children;
@@ -45,7 +38,16 @@ const SuperAdminRoute = ({ children }) => {
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <SuperAdminRoute>
+              <Dashboard />
+            </SuperAdminRoute>
+          </ProtectedRoute>
+        }
+      />
       <Route path="/login" element={<Login />} />
       <Route path="/logout" element={<Logout />} />
       <Route

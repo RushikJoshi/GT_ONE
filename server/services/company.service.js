@@ -58,10 +58,16 @@ export const createCompanyWithAdmin = async ({
   }
 
   const selectedProducts = normalizeProductNames(products);
-  const productDocs = await Product.find({ name: { $in: selectedProducts } });
-
-  if (selectedProducts.length !== productDocs.length) {
-    return { error: { status: 400, message: "Invalid product selection" } };
+  let productDocs = [];
+  
+  if (selectedProducts.length > 0) {
+    productDocs = await Product.find({ name: { $in: selectedProducts } });
+    if (selectedProducts.length !== productDocs.length) {
+      return { error: { status: 400, message: "Invalid product selection" } };
+    }
+  } else {
+    // If no products provided from UI, default to giving ALL available products
+    productDocs = await Product.find({});
   }
 
   const defaultHrms = normalizeHrmsModuleSettings(undefined, undefined);
