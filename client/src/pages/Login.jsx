@@ -10,7 +10,10 @@ function Login() {
   const { setUser } = useAuth();
 
   const resolveFallbackRedirect = (role) => {
-    const normalizedRole = String(role || "").trim().toLowerCase();
+    const normalizedRole = String(role || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
     const HRMS_BASE = "http://localhost:5176";
 
     if (["company_admin", "admin", "hr", "hr_admin", "owner"].includes(normalizedRole)) {
@@ -62,7 +65,10 @@ function Login() {
           return;
         }
 
-        const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
+        const normalizedRole = String(nextUser?.role || "")
+          .trim()
+          .toLowerCase()
+          .replace(/[\s-]+/g, "_");
         if (["super_admin", "superadmin", "psa"].includes(normalizedRole)) {
           navigate("/dashboard", { replace: true });
           return;
@@ -132,7 +138,10 @@ function Login() {
       const nextUser = res.data.user;
       setUser(nextUser);
       
-      const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
+      const normalizedRole = String(nextUser?.role || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_");
 
       if (["super_admin", "superadmin", "psa"].includes(normalizedRole) && !hasExplicitRedirectUrl) {
         navigate("/dashboard", { replace: true });

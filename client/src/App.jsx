@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import Logout from "./pages/Logout";
@@ -20,8 +20,12 @@ const ProtectedRoute = ({ children }) => {
 };
 
 const SuperAdminRoute = ({ children }) => {
-  const { user } = useAuth();
-  const normalizedRole = String(user?.role || "").trim().toLowerCase();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const normalizedRole = String(user?.role || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   const normalizedEmail = String(user?.email || "").trim().toLowerCase();
   const isSuperAdminUser =
     normalizedRole === "super_admin" ||
@@ -34,6 +38,18 @@ const SuperAdminRoute = ({ children }) => {
         <div className="card simple-card">
           <h2>Access Denied</h2>
           <p>This panel is available only for super admin users.</p>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", marginTop: 16 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={async () => {
+                await logout();
+                navigate("/login", { replace: true });
+              }}
+            >
+              Switch account
+            </button>
+          </div>
         </div>
       </div>
     );
