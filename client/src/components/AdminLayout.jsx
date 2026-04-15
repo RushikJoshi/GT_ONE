@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import './AdminLayout.css';
@@ -6,6 +6,7 @@ import './AdminLayout.css';
 const AdminLayout = ({ children, activeTab, setActiveTab }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const handleLogout = async () => {
     await logout();
@@ -37,13 +38,23 @@ const AdminLayout = ({ children, activeTab, setActiveTab }) => {
 
   return (
     <div className="admin-container">
-      <aside className="admin-sidebar">
+      <aside className={`admin-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
           <h2>GT ONE</h2>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setIsSidebarCollapsed((v) => !v)}
+            aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={isSidebarCollapsed ? 'Expand' : 'Collapse'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
         </div>
         
         <nav className="sidebar-nav">
-          <div className="nav-section-label">SUPER ADMIN</div>
           {navItems.map((item) => (
             <button
               key={item.id}
@@ -77,10 +88,7 @@ const AdminLayout = ({ children, activeTab, setActiveTab }) => {
         </div>
       </aside>
 
-      <main className="admin-main">
-        <div className="main-header">
-          <h1>{navItems.find(i => i.id === activeTab)?.label}</h1>
-        </div>
+      <main className={`admin-main ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         <div className="main-content">
           {children}
         </div>

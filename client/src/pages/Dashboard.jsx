@@ -333,10 +333,9 @@ function Dashboard() {
         if (!selectedCompany) {
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'fadeIn 0.3s ease-out' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ffffff', padding: '16px 24px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ffffff', padding: '16px 24px', borderRadius: '0px', border: '1px solid #e2e8f0' }}>
                  <div>
                     <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>Registered Organizations</h2>
-                    <p className="muted" style={{ fontSize: '0.8rem', margin: '2px 0 0 0' }}>Managing {companies.length} corporate entities</p>
                  </div>
                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <button 
@@ -360,7 +359,7 @@ function Dashboard() {
                  </div>
               </div>
 
-              <div className="card" style={{ padding: '0', overflow: 'hidden', border: '1px solid #eef2f6' }}>
+              <div className="card" style={{ padding: '0', overflow: 'hidden', border: '1px solid #eef2f6', borderRadius: 0 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 120px', padding: '12px 24px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
                    <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Client Entity</div>
                    <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Module Suite</div>

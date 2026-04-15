@@ -134,11 +134,11 @@ export const logout = async (req, res) => {
   revokeSessionToken(req.cookies?.sso_token);
   const cookieOptions = getCookieOptions(req.headers.host);
   res.clearCookie("sso_token", cookieOptions);
-  
+
   const { redirect } = req.query;
   if (redirect && (redirect.startsWith("http") || redirect.startsWith("/"))) {
     return res.redirect(redirect);
   }
-  
+
   return res.json({ message: "Logged out successfully" });
 };

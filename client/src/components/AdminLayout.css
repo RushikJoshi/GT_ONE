@@ -13,10 +13,14 @@
   position: fixed;
   height: 100vh;
   z-index: 50;
+  transition: width 0.2s ease;
 }
 
 .sidebar-header {
   padding: 32px 24px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .sidebar-header h2 {
@@ -25,6 +29,59 @@
   color: #0f172a;
   letter-spacing: -0.04em;
   margin: 0;
+}
+
+.sidebar-toggle {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.sidebar-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-sidebar.collapsed {
+  width: 88px;
+}
+
+.admin-sidebar.collapsed .sidebar-header {
+  padding: 24px 12px;
+  justify-content: center;
+  gap: 8px;
+}
+
+.admin-sidebar.collapsed .sidebar-header h2 {
+  display: none;
+}
+
+.admin-sidebar.collapsed .nav-item {
+  justify-content: center;
+}
+
+.admin-sidebar.collapsed .nav-item span,
+.admin-sidebar.collapsed .user-details,
+.admin-sidebar.collapsed .logout-btn span {
+  display: none;
+}
+
+.admin-sidebar.collapsed .sidebar-nav {
+  padding: 0 12px;
 }
 
 .sidebar-nav {
@@ -58,7 +115,7 @@
   font-size: 0.95rem;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
-  border: border: 1px solid transparent;
+  border: 1px solid transparent;
   background: transparent;
   width: 100%;
   text-align: left;
@@ -168,10 +225,15 @@
 .admin-main {
   flex: 1;
   margin-left: 230px;
-  padding: 40px 48px;
+  padding: 16px 16px 16px 8px;
   height: 100vh;
   overflow-y: auto;
   scroll-behavior: smooth;
+  transition: margin-left 0.2s ease;
+}
+
+.admin-main.sidebar-collapsed {
+  margin-left: 88px;
 }
 
 .main-header {
@@ -202,7 +264,7 @@
   }
   .admin-main {
     margin-left: 88px;
-    padding: 28px;
+    padding: 16px 16px 16px 8px;
   }
   .user-info {
     justify-content: center;
