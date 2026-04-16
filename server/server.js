@@ -15,6 +15,7 @@ import { seedInitialData } from "./services/seed.service.js";
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 
 // Security Headers with CSP
 app.use(helmet({

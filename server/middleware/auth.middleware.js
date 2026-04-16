@@ -1,7 +1,5 @@
-import jwt from "jsonwebtoken";
 import { ROLES } from "../constants/roles.js";
-
-const getJwtSecret = () => process.env.JWT_SECRET || "fallback_secret";
+import { verifyJwtWithContract } from "../services/auth.service.js";
 
 /**
  * @desc    Middleware to verify sso_token cookie
@@ -16,7 +14,10 @@ export const protect = async (req, res, next) => {
     }
 
     // Verify token
-    const decoded = jwt.verify(token, getJwtSecret());
+    const decoded = verifyJwtWithContract({
+      token,
+      audience: "sso"
+    });
 
     // Attach user to request
     req.user = decoded;
@@ -40,7 +41,10 @@ export const optionalProtect = async (req, _res, next) => {
       return next();
     }
 
-    const decoded = jwt.verify(token, getJwtSecret());
+    const decoded = verifyJwtWithContract({
+      token,
+      audience: "sso"
+    });
     req.user = decoded;
     return next();
   } catch (error) {

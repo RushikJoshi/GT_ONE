@@ -1,50 +1,277 @@
-import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import Tenant from "../models/Tenant.js";
 import {
   getCookieOptions,
   getLoginResponseData,
+  isDirectAdminLogin,
   revokeSessionToken,
-  validateLogin
+  resolveDirectAdminUser,
+  shouldBypassOtpForUser,
+  validateLogin,
+  verifyJwtWithContract
 } from "../services/auth.service.js";
+import {
+  clearBruteForceFailures,
+  getBruteForceState,
+  recordBruteForceFailure
+} from "../services/bruteForce.service.js";
+import {
+  createLoginOtpChallenge,
+  verifyLoginOtpChallenge
+} from "../services/otp.service.js";
+
+const getClientIpAddress = (req) =>
+  String(req.ip || req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown").trim();
+
+const getRequestOrigin = (req) => req.headers.origin || req.headers.referer || null;
+
+const applySessionCookie = ({ req, res, token }) => {
+  const cookieOptions = getCookieOptions(req.headers.host);
+  res.cookie("sso_token", token, cookieOptions);
+};
+
+const buildLockResponse = ({ res, retryAfterSeconds, message }) => {
+  if (retryAfterSeconds) {
+    res.setHeader("Retry-After", String(retryAfterSeconds));
+  }
+
+  return res.status(429).json({
+    message,
+    retryAfterSeconds
+  });
+};
 
 /**
- * @desc    Login user & Set cookie
+ * @desc    Start login flow. Admin logs in directly, all other users must verify OTP.
  * @route   POST /api/auth/login
  */
 export const login = async (req, res) => {
   try {
     const { email, identifier, password } = req.body || {};
     const { redirect } = req.query;
+    const clientIpAddress = getClientIpAddress(req);
 
-    const resolvedIdentifier = String(identifier || email || "").trim();
+    const resolvedIdentifier = String(identifier || email || "").trim().toLowerCase();
+    const lockState = getBruteForceState({
+      scope: "login",
+      identifier: resolvedIdentifier,
+      ipAddress: clientIpAddress
+    });
+
+    if (lockState.blocked) {
+      return buildLockResponse({
+        res,
+        retryAfterSeconds: lockState.retryAfterSeconds,
+        message: "Too many failed login attempts. Please try again later."
+      });
+    }
+
+    if (isDirectAdminLogin({ email: resolvedIdentifier, password })) {
+      const adminUser = await resolveDirectAdminUser();
+      const responseData = await getLoginResponseData({
+        user: adminUser,
+        redirect,
+        requestOrigin: getRequestOrigin(req)
+      });
+
+      if (responseData.error) {
+        return res.status(responseData.error.status).json({ message: responseData.error.message });
+      }
+
+      clearBruteForceFailures({
+        scope: "login",
+        identifier: resolvedIdentifier,
+        ipAddress: clientIpAddress
+      });
+
+      applySessionCookie({
+        req,
+        res,
+        token: responseData.token
+      });
+
+      console.log(`[SSO] Direct admin login successful: ${adminUser.email}`);
+
+      return res.json({
+        success: true,
+        requiresOtp: false,
+        message: "Login successful",
+        redirectTo: responseData.redirectTo,
+        user: responseData.payloadUser
+      });
+    }
+
     const validation = await validateLogin({ identifier: resolvedIdentifier, password });
     if (validation.error) {
+      if (validation.error.status === 401) {
+        const failureState = recordBruteForceFailure({
+          scope: "login",
+          identifier: resolvedIdentifier,
+          ipAddress: clientIpAddress
+        });
+
+        if (failureState.blocked) {
+          return buildLockResponse({
+            res,
+            retryAfterSeconds: failureState.retryAfterSeconds,
+            message: "Too many failed login attempts. Please try again later."
+          });
+        }
+      }
+
       return res.status(validation.error.status).json({ message: validation.error.message });
     }
 
-    const responseData = await getLoginResponseData({
+    clearBruteForceFailures({
+      scope: "login",
+      identifier: resolvedIdentifier,
+      ipAddress: clientIpAddress
+    });
+
+    if (shouldBypassOtpForUser(validation.user)) {
+      const responseData = await getLoginResponseData({
+        user: validation.user,
+        redirect,
+        requestOrigin: getRequestOrigin(req)
+      });
+
+      if (responseData.error) {
+        return res.status(responseData.error.status).json({ message: responseData.error.message });
+      }
+
+      applySessionCookie({
+        req,
+        res,
+        token: responseData.token
+      });
+
+      console.log(`[SSO] OTP bypass login successful: ${validation.user.email}`);
+
+      return res.json({
+        success: true,
+        requiresOtp: false,
+        message: "Login successful",
+        redirectTo: responseData.redirectTo,
+        user: responseData.payloadUser
+      });
+    }
+
+    const otpChallenge = await createLoginOtpChallenge({
       user: validation.user,
       redirect,
-      requestOrigin: req.headers.origin || req.headers.referer || null
+      ipAddress: clientIpAddress,
+      userAgent: req.headers["user-agent"]
     });
+
+    return res.json({
+      success: true,
+      requiresOtp: true,
+      message:
+        otpChallenge.deliveryMode === "json"
+          ? "OTP email delivery is not configured. Use the local preview OTP until SMTP/Gmail is set up."
+          : "OTP sent to your registered email address",
+      email: otpChallenge.email,
+      otpRequestId: otpChallenge.requestId,
+      otpSource: otpChallenge.source,
+      otpTenantId: otpChallenge.tenantId,
+      devOtpPreview: otpChallenge.devOtpPreview || null,
+      expiresInSeconds: otpChallenge.expiresInSeconds
+    });
+  } catch (error) {
+    console.error(`[SSO] Login Error: ${error.message}`);
+    if (error.publicMessage) {
+      return res.status(error.status || 500).json({ message: error.publicMessage });
+    }
+
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+/**
+ * @desc    Verify login OTP and create session
+ * @route   POST /api/auth/verify-otp
+ */
+export const verifyOtp = async (req, res) => {
+  try {
+    const { email, otp, otpRequestId, requestId, source, otpSource, tenantId, otpTenantId } = req.body || {};
+    const { redirect } = req.query;
+    const resolvedEmail = String(email || "").trim().toLowerCase();
+    const clientIpAddress = getClientIpAddress(req);
+    const rateState = getBruteForceState({
+      scope: "otp_verify",
+      identifier: resolvedEmail || String(otpRequestId || requestId || "").trim(),
+      ipAddress: clientIpAddress
+    });
+
+    if (rateState.blocked) {
+      return buildLockResponse({
+        res,
+        retryAfterSeconds: rateState.retryAfterSeconds,
+        message: "Too many invalid OTP attempts. Please try again later."
+      });
+    }
+
+    const verification = await verifyLoginOtpChallenge({
+      email: resolvedEmail,
+      requestId: otpRequestId || requestId,
+      otp,
+      source: source || otpSource,
+      tenantId: tenantId || otpTenantId
+    });
+
+    if (verification.error) {
+      if (verification.error.reason === "otp_invalid") {
+        const failureState = recordBruteForceFailure({
+          scope: "otp_verify",
+          identifier: resolvedEmail || String(otpRequestId || requestId || "").trim(),
+          ipAddress: clientIpAddress
+        });
+
+        if (failureState.blocked) {
+          return buildLockResponse({
+            res,
+            retryAfterSeconds: failureState.retryAfterSeconds,
+            message: "Too many invalid OTP attempts. Please try again later."
+          });
+        }
+      }
+
+      return res.status(verification.error.status).json({ message: verification.error.message });
+    }
+
+    clearBruteForceFailures({
+      scope: "otp_verify",
+      identifier: resolvedEmail || String(otpRequestId || requestId || "").trim(),
+      ipAddress: clientIpAddress
+    });
+
+    const responseData = await getLoginResponseData({
+      user: verification.user,
+      redirect: redirect || verification.redirect,
+      requestOrigin: getRequestOrigin(req)
+    });
+
     if (responseData.error) {
       return res.status(responseData.error.status).json({ message: responseData.error.message });
     }
 
-    const cookieOptions = getCookieOptions(req.headers.host);
-    res.cookie("sso_token", responseData.token, cookieOptions);
+    applySessionCookie({
+      req,
+      res,
+      token: responseData.token
+    });
 
-    console.log(`[SSO] User logged in: ${validation.user.email}, Role: ${validation.user.role}`);
+    console.log(`[SSO] OTP login successful: ${verification.email}`);
 
     return res.json({
       success: true,
-      message: "Login successful",
+      requiresOtp: false,
+      message: "OTP verified. Login successful",
       redirectTo: responseData.redirectTo,
       user: responseData.payloadUser
     });
   } catch (error) {
-    console.error(`[SSO] Login Error: ${error.message}`);
+    console.error(`[SSO] OTP Verification Error: ${error.message}`);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -59,10 +286,10 @@ export const getMe = async (req, res) => {
 
     if (!sessionUser && req.cookies?.sso_token) {
       try {
-        sessionUser = jwt.verify(
-          req.cookies.sso_token,
-          process.env.JWT_SECRET || "fallback_secret"
-        );
+        sessionUser = verifyJwtWithContract({
+          token: req.cookies.sso_token,
+          audience: "sso"
+        });
       } catch (_error) {
         sessionUser = null;
       }

@@ -28,6 +28,16 @@ const companySchema = new mongoose.Schema(
       default: null,
       trim: true
     },
+    organizationId: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    databaseName: {
+      type: String,
+      default: null,
+      trim: true
+    },
     phone: {
       type: String,
       default: null,

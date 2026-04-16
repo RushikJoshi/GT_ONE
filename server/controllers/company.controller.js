@@ -164,9 +164,20 @@ export const updateCompany = async (req, res) => {
       return res.status(400).json({ message: "name and email are required" });
     }
 
-    const emailOwner = await Company.findOne({ email: normalizedEmail }).select("_id").lean();
-    if (emailOwner && String(emailOwner._id) !== String(company._id)) {
-      return res.status(400).json({ message: "Company email already exists" });
+    // Only enforce email uniqueness when changing the email.
+    // This prevents legacy duplicate emails from blocking unrelated updates
+    // (e.g., changing admin password) when the company keeps its current email.
+    const currentEmail = String(company.email || "").trim().toLowerCase();
+    if (normalizedEmail !== currentEmail) {
+      const emailOwner = await Company.findOne({
+        email: normalizedEmail,
+        _id: { $ne: company._id }
+      })
+        .select("_id")
+        .lean();
+      if (emailOwner) {
+        return res.status(400).json({ message: "Company email already exists" });
+      }
     }
 
     company.name = normalizedName;

@@ -18,23 +18,31 @@ const normalizeProductNames = (products) =>
     : [];
 
 const generateCompanyCode = async ({ name, email }) => {
-  const source = String(name || email || "")
-    .replace(/[^a-zA-Z0-9]/g, "")
+  // Requirement: 3 letters from company name + 001/002/...
+  // Example: "gitakshmi" -> "GIT001"
+  const nameSource = String(name || "").trim();
+  const emailSource = String(email || "").trim();
+  const source = (nameSource || emailSource)
+    .replace(/[^a-zA-Z]/g, "")
     .toUpperCase();
 
   const prefix = (source.slice(0, 3) || "COM").padEnd(3, "X");
 
   const existing = await Company.find(
-    { code: { $regex: new RegExp(`^${prefix}\\d{3}$`, "i") } },
-    { code: 1 }
-  )
-    .lean()
-    .exec();
+    {
+      $or: [
+        { code: { $regex: new RegExp(`^${prefix}\\d{3}$`, "i") } },
+        { companyCode: { $regex: new RegExp(`^${prefix}\\d{3}$`, "i") } }
+      ]
+    },
+    { code: 1, companyCode: 1 }
+  ).lean();
 
   let max = 0;
   for (const item of existing) {
-    const code = String(item?.code || "").toUpperCase();
-    const suffix = code.slice(prefix.length);
+    const candidate = String(item?.code || item?.companyCode || "").toUpperCase();
+    if (!candidate.startsWith(prefix)) continue;
+    const suffix = candidate.slice(prefix.length);
     const n = Number.parseInt(suffix, 10);
     if (Number.isFinite(n)) max = Math.max(max, n);
   }
@@ -111,6 +119,12 @@ export const createCompanyWithAdmin = async ({
     email: normalizedCompanyEmail,
     code: generatedCompanyCode,
     companyCode: generatedCompanyCode,
+    // Some environments have a unique Mongo index on `organizationId`.
+    // Ensure it is always set to a unique value during creation.
+    organizationId: generatedCompanyCode,
+    // Some environments also have a unique Mongo index on `databaseName`.
+    // Use a deterministic, unique value based on generated code.
+    databaseName: String(generatedCompanyCode).toLowerCase(),
     phone: phone ? String(phone).trim() : null,
     companyType: companyType ? String(companyType).trim() : null,
     gstNumber: gstNumber ? String(gstNumber).trim() : null,

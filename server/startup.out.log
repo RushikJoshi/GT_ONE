@@ -1,0 +1,4 @@
+◇ injecting env (26) from .env // tip: ⌘ override existing { override: true }
+[SSO] MongoDB Connected
+[SEED] SUPER_ADMIN already exists: admin@gitakshmi.com
+[SSO] System running on port 5004
