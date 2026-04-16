@@ -11,15 +11,24 @@ const getClientKey = (req) => {
   return `${ip}:${req.path}`;
 };
 
-export const createRateLimiter = ({ maxPerMinuteLocal, maxPerMinuteProd }) => {
+export const createRateLimiter = ({
+  maxPerMinuteLocal,
+  maxPerMinuteProd,
+  maxRequestsLocal,
+  maxRequestsProd,
+  windowMs = WINDOW_MS,
+  keyBuilder = getClientKey
+}) => {
   return (req, res, next) => {
     const now = Date.now();
-    const key = getClientKey(req);
-    const limit = isLocalEnv() ? maxPerMinuteLocal : maxPerMinuteProd;
+    const key = keyBuilder(req);
+    const limit = isLocalEnv()
+      ? (maxRequestsLocal ?? maxPerMinuteLocal)
+      : (maxRequestsProd ?? maxPerMinuteProd);
     const entry = store.get(key);
 
     if (!entry || now >= entry.resetAt) {
-      store.set(key, { count: 1, resetAt: now + WINDOW_MS });
+      store.set(key, { count: 1, resetAt: now + windowMs });
       return next();
     }
 

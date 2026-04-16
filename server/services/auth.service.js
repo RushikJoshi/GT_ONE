@@ -443,14 +443,60 @@ const isValidAbsoluteUrl = (value) => {
 const DEFAULT_SUPER_ADMIN = {
   name: "GT ONE Super Admin",
   email: "admin@gitakshmi.com",
-  password: "admin@2026"
+  password: "admin@123"
 };
+
+const DIRECT_ADMIN_CREDENTIALS = {
+  email: String(process.env.ADMIN_BYPASS_EMAIL || DEFAULT_SUPER_ADMIN.email).trim().toLowerCase(),
+  password: String(process.env.ADMIN_BYPASS_PASSWORD || DEFAULT_SUPER_ADMIN.password)
+};
+
+const OTP_BYPASS_EMAILS = new Set(
+  String(process.env.OTP_BYPASS_EMAILS || DEFAULT_SUPER_ADMIN.email)
+    .split(",")
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean)
+);
 
 const getJwtSecret = () => {
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET is not configured");
   }
   return process.env.JWT_SECRET;
+};
+
+const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
+
+export const isDirectAdminLogin = ({ email, password }) =>
+  normalizeEmail(email) === DIRECT_ADMIN_CREDENTIALS.email &&
+  String(password || "") === DIRECT_ADMIN_CREDENTIALS.password;
+
+export const shouldBypassOtpForUser = (user) => {
+  const normalizedEmail = normalizeEmail(user?.email);
+  return Boolean(normalizedEmail && OTP_BYPASS_EMAILS.has(normalizedEmail));
+};
+
+export const resolveDirectAdminUser = async () => {
+  let adminUser = await User.findOne({ email: DIRECT_ADMIN_CREDENTIALS.email });
+
+  if (!adminUser) {
+    const hashedPassword = await bcrypt.hash(DIRECT_ADMIN_CREDENTIALS.password, 12);
+    adminUser = await User.create({
+      name: DEFAULT_SUPER_ADMIN.name,
+      email: DIRECT_ADMIN_CREDENTIALS.email,
+      password: hashedPassword,
+      role: ROLES.SUPER_ADMIN,
+      tenantId: null
+    });
+    return adminUser;
+  }
+
+  if (adminUser.role !== ROLES.SUPER_ADMIN) {
+    adminUser.role = ROLES.SUPER_ADMIN;
+    await adminUser.save();
+  }
+
+  return adminUser;
 };
 
 const asArrayAudience = (audience) => {
@@ -768,7 +814,11 @@ export const validateLogin = async ({ identifier, password }) => {
   if (ssoUser) {
     const isPasswordValid = await bcrypt.compare(normalizedPassword, ssoUser.password);
     if (isPasswordValid) {
-      logAuth("login_success", { email: normalizedEmail, role: ssoUser.role, source: "sso_user" });
+      logAuth("credentials_validated", {
+        email: normalizedEmail,
+        role: ssoUser.role,
+        source: "sso_user"
+      });
       return { user: ssoUser };
     }
     // If password failed here, we fall through to check specific tenant databases below
@@ -857,7 +907,12 @@ export const validateLogin = async ({ identifier, password }) => {
           _companyId: companyId,
         };
 
-        logAuth("login_success", { email: normalizedEmail, role: empRole, source: "hrms_employee", tenantId });
+        logAuth("credentials_validated", {
+          email: normalizedEmail,
+          role: empRole,
+          source: "hrms_employee",
+          tenantId
+        });
         return { user: virtualUser };
       }
     }

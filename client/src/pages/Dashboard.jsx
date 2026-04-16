@@ -107,6 +107,8 @@ function Dashboard() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editCompany, setEditCompany] = useState(null);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [editForm, setEditForm] = useState({
     name: "",
     email: "",
@@ -127,6 +129,7 @@ function Dashboard() {
   const [editCompanyLogoPreview, setEditCompanyLogoPreview] = useState("");
   const [companySearch, setCompanySearch] = useState("");
   const [companyPage, setCompanyPage] = useState(1);
+  const [dashboardCompanyPage, setDashboardCompanyPage] = useState(1);
   const [expandedCompanyProducts, setExpandedCompanyProducts] = useState(() => new Set());
   const [currentActivityPage, setCurrentActivityPage] = useState(1);
   const [activitySearch, setActivitySearch] = useState("");
@@ -235,44 +238,67 @@ function Dashboard() {
 
     try {
       setSubmitting(true);
+      const normalizedName = String(editForm.name || "").trim();
+      const normalizedEmail = String(editForm.email || "")
+        .trim()
+        .toLowerCase();
       const payload = {
-        name: editForm.name,
-        email: editForm.email,
-        code: editForm.code,
-        phone: editForm.phone,
-        companyType: editForm.companyType,
-        gstNumber: editForm.gstNumber,
-        panNumber: editForm.panNumber,
-        registrationNo: editForm.registrationNo,
-        country: editForm.country,
-        state: editForm.state,
-        officeAddress: editForm.officeAddress,
-        subCompanyLimit: editForm.subCompanyLimit,
-        adminName: editForm.adminName,
-        adminPassword: editForm.adminPassword
+        name: normalizedName,
+        email: normalizedEmail,
+        phone: String(editForm.phone || "").trim(),
+        companyType: String(editForm.companyType || "").trim(),
+        gstNumber: String(editForm.gstNumber || "").trim(),
+        panNumber: String(editForm.panNumber || "").trim(),
+        registrationNo: String(editForm.registrationNo || "").trim(),
+        country: String(editForm.country || "").trim(),
+        state: String(editForm.state || "").trim(),
+        officeAddress: String(editForm.officeAddress || "").trim(),
+        subCompanyLimit:
+          String(editForm.subCompanyLimit ?? "").trim() === ""
+            ? null
+            : String(editForm.subCompanyLimit).trim(),
+        adminName: String(editForm.adminName || "").trim(),
+        adminPassword: String(editForm.adminPassword || "").trim()
       };
 
-      const [res, productsRes] = await Promise.all([
+      if (!payload.name || !payload.email) {
+        setError("Company name and email are required");
+        return;
+      }
+
+      const [companyResult, productsResult] = await Promise.allSettled([
         api.put(`/companies/${editCompany._id}`, payload),
         api.put(`/companies/${editCompany._id}/products`, { products: editForm.products || [] })
       ]);
 
+      if (companyResult.status === "rejected") {
+        throw companyResult.reason;
+      }
+      if (productsResult.status === "rejected") {
+        throw productsResult.reason;
+      }
+
+      const res = companyResult.value;
+      const productsRes = productsResult.value;
+
       const updated = res?.data?.company;
       if (updated?._id) {
         const nextProducts = productsRes?.data?.products || editForm.products || [];
-        setCompanies((prev) =>
-          prev.map((c) =>
-            c._id === updated._id
-              ? {
-                  ...c,
-                  ...updated,
-                  status: updated.isActive ? "ACTIVE" : "INACTIVE",
-                  products: nextProducts,
-                  admin: c?.admin ? { ...c.admin, name: editForm.adminName || c.admin.name } : c.admin
-                }
-              : c
-          )
-        );
+        const mergeCompanyForUi = (c) =>
+          c?._id === updated._id
+            ? {
+                ...c,
+                ...updated,
+                status: updated.isActive ? "ACTIVE" : "INACTIVE",
+                products: nextProducts,
+                admin: c?.admin ? { ...c.admin, name: editForm.adminName || c.admin.name } : c.admin
+              }
+            : c;
+
+        // Update list + any selected/active views so UI reflects saved edits immediately.
+        setCompanies((prev) => prev.map(mergeCompanyForUi));
+        setSelectedCompany((prev) => (prev?._id === updated._id ? mergeCompanyForUi(prev) : prev));
+        setProductTabCompany((prev) => (prev?._id === updated._id ? mergeCompanyForUi(prev) : prev));
       } else {
         await loadData();
       }
@@ -430,13 +456,25 @@ function Dashboard() {
                 <button 
                   className="link-btn" 
                   style={{ background: '#f1f5f9', color: '#1e40af', padding: '4px 10px', fontSize: '0.7rem', borderRadius: '6px', fontWeight: 700 }}
-                  onClick={() => setActiveTab('company')}
+                  onClick={() => {
+                    setActiveTab('company');
+                    setCompanyPage(1);
+                  }}
                 >
                   Manage All
                 </button>
               </div>
+              {(() => {
+                const companiesPerPage = 10;
+                const totalPages = Math.max(1, Math.ceil((companies || []).length / companiesPerPage));
+                const safePage = Math.min(dashboardCompanyPage, totalPages);
+                const start = (safePage - 1) * companiesPerPage;
+                const paged = (companies || []).slice(start, start + companiesPerPage);
+
+                return (
+                  <>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px' }}>
-                {companies.map((company) => (
+                {paged.map((company) => (
                   <div 
                     key={company._id} 
                     onClick={() => setSelectedCompany(company)}
@@ -466,6 +504,53 @@ function Dashboard() {
                   </div>
                 ))}
               </div>
+
+              {((companies || []).length > companiesPerPage) && (
+                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 10, marginTop: 14 }}>
+                  <button
+                    type="button"
+                    disabled={safePage === 1}
+                    onClick={() => setDashboardCompanyPage((p) => Math.max(1, p - 1))}
+                    style={{
+                      minWidth: 36,
+                      height: 34,
+                      borderRadius: 10,
+                      border: "1px solid #e2e8f0",
+                      background: safePage === 1 ? "#f8fafc" : "#ffffff",
+                      color: "#64748b",
+                      fontWeight: 800,
+                      cursor: safePage === 1 ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    ‹
+                  </button>
+
+                  <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "#475569" }}>
+                    Page {safePage} of {totalPages}
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={safePage === totalPages}
+                    onClick={() => setDashboardCompanyPage((p) => Math.min(totalPages, p + 1))}
+                    style={{
+                      minWidth: 36,
+                      height: 34,
+                      borderRadius: 10,
+                      border: "1px solid #e2e8f0",
+                      background: safePage === totalPages ? "#f8fafc" : "#ffffff",
+                      color: "#64748b",
+                      fontWeight: 800,
+                      cursor: safePage === totalPages ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    ›
+                  </button>
+                </div>
+              )}
+                  </>
+                );
+              })()}
             </div>
 
             {/* Selection Modal */}
@@ -614,7 +699,7 @@ function Dashboard() {
                    <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Status</div>
                    <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', textAlign: 'right' }}>Action</div>
                 </div>
-                <div style={{ maxHeight: 'calc(100vh - 280px)', overflowY: 'auto' }}>
+                <div style={{ overflow: 'visible' }}>
                   {pagedCompanies.map((company) => (
                     <div 
                       key={company._id} 
@@ -1326,7 +1411,7 @@ function Dashboard() {
                 <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>Action</div>
               </div>
 
-              <div style={{ maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
+              <div style={{ overflow: 'visible' }}>
                 {companies.map((company) => {
                   const visibleProducts = (company.products || []).filter((p) => String(p).toUpperCase() !== "TMS");
                   return (
@@ -1397,6 +1482,91 @@ function Dashboard() {
 
   return (
     <AdminLayout activeTab={activeTab} setActiveTab={setActiveTab}>
+      {error ? (
+        <div style={{ padding: "14px 22px 0 22px" }}>
+          <div
+            style={{
+              background: "#fef2f2",
+              border: "1px solid #fecaca",
+              color: "#991b1b",
+              padding: "12px 14px",
+              borderRadius: 14,
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12
+            }}
+          >
+            <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {error}
+            </div>
+            <button
+              type="button"
+              onClick={() => setError("")}
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "#991b1b",
+                fontWeight: 900,
+                cursor: "pointer",
+                padding: "6px 10px",
+                borderRadius: 10
+              }}
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {!error && message ? (
+        <div
+          style={{
+            position: "fixed",
+            top: 16,
+            right: 16,
+            zIndex: 2000,
+            background: "#ecfdf5",
+            border: "1px solid #bbf7d0",
+            color: "#065f46",
+            padding: "12px 14px",
+            borderRadius: 14,
+            fontWeight: 800,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            minWidth: 260,
+            maxWidth: 420,
+            boxShadow: "0 18px 40px rgba(15, 23, 42, 0.14)"
+          }}
+          role="status"
+          aria-live="polite"
+        >
+          <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {message}
+          </div>
+          <button
+            type="button"
+            onClick={() => setMessage("")}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "#065f46",
+              fontWeight: 900,
+              cursor: "pointer",
+              padding: "6px 10px",
+              borderRadius: 10
+            }}
+            aria-label="Dismiss message"
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
+
       {renderTabContent()}
 
       {showEditModal &&
@@ -1588,14 +1758,58 @@ function Dashboard() {
                         <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
                           PASSWORD
                         </label>
-                        <input
-                          type="password"
-                          value={editForm.adminPassword}
-                          onChange={(e) => setEditForm((p) => ({ ...p, adminPassword: e.target.value }))}
-                          placeholder="Leave blank to keep same"
-                          autoComplete="new-password"
-                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
-                        />
+                        <div style={{ position: "relative" }}>
+                          <input
+                            type={showEditPassword ? "text" : "password"}
+                            value={editForm.adminPassword}
+                            onChange={(e) => setEditForm((p) => ({ ...p, adminPassword: e.target.value }))}
+                            placeholder="Enter new password (optional)"
+                            autoComplete="new-password"
+                            style={{
+                              width: "100%",
+                              padding: "12px 44px 12px 14px",
+                              borderRadius: "14px",
+                              border: "1px solid transparent",
+                              outline: "none",
+                              background: "#f8fafc"
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowEditPassword((v) => !v)}
+                            style={{
+                              position: "absolute",
+                              right: 10,
+                              top: "50%",
+                              transform: "translateY(-50%)",
+                              width: 32,
+                              height: 32,
+                              borderRadius: 12,
+                              border: "none",
+                              background: "transparent",
+                              color: "#64748b",
+                              cursor: "pointer",
+                              display: "grid",
+                              placeItems: "center",
+                              boxShadow: "none"
+                            }}
+                            aria-label={showEditPassword ? "Hide password" : "Show password"}
+                          >
+                            {showEditPassword ? (
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.11 1 12c.62-1.47 1.53-2.87 2.68-4.11" />
+                                <path d="M10.58 10.58A2 2 0 0 0 12 14a2 2 0 0 0 1.42-.58" />
+                                <path d="M9.88 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.89 11 8-1.02 2.43-2.8 4.58-5.06 5.94" />
+                                <path d="M1 1l22 22" />
+                              </svg>
+                            ) : (
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                                <circle cx="12" cy="12" r="3" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       <div>
@@ -1760,6 +1974,22 @@ function Dashboard() {
                       ))}
                     </div>
                   </div>
+
+                  {error ? (
+                    <div
+                      style={{
+                        marginTop: 14,
+                        background: "#fef2f2",
+                        border: "1px solid #fecaca",
+                        color: "#991b1b",
+                        padding: "10px 12px",
+                        borderRadius: 14,
+                        fontWeight: 800
+                      }}
+                    >
+                      {error}
+                    </div>
+                  ) : null}
 
                   <div style={{ marginTop: "22px", display: "flex", justifyContent: "flex-end", gap: "14px" }}>
                   <button
@@ -1998,16 +2228,60 @@ function Dashboard() {
                     <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                       PASSWORD
                     </label>
-                    <input
-                      type="password"
-                      name="adminPassword"
-                      value={form.adminPassword}
-                      onChange={updateField}
-                      required
+                    <div style={{ position: "relative" }}>
+                      <input
+                        type={showCreatePassword ? "text" : "password"}
+                        name="adminPassword"
+                        value={form.adminPassword}
+                        onChange={updateField}
+                        required
                         placeholder="Create a password"
-                      autoComplete="new-password"
-                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                    />
+                        autoComplete="new-password"
+                        style={{
+                          width: "100%",
+                          padding: "12px 44px 12px 14px",
+                          borderRadius: "14px",
+                          border: "1px solid transparent",
+                          outline: "none",
+                          background: "#f8fafc"
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCreatePassword((v) => !v)}
+                        style={{
+                          position: "absolute",
+                          right: 10,
+                          top: "50%",
+                          transform: "translateY(-50%)",
+                          width: 32,
+                          height: 32,
+                          borderRadius: 12,
+                          border: "none",
+                          background: "#ffffff",
+                          color: "#64748b",
+                          cursor: "pointer",
+                          display: "grid",
+                          placeItems: "center",
+                          boxShadow: "0 6px 14px rgba(15, 23, 42, 0.08)"
+                        }}
+                        aria-label={showCreatePassword ? "Hide password" : "Show password"}
+                      >
+                        {showCreatePassword ? (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.11 1 12c.62-1.47 1.53-2.87 2.68-4.11" />
+                            <path d="M10.58 10.58A2 2 0 0 0 12 14a2 2 0 0 0 1.42-.58" />
+                            <path d="M9.88 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.89 11 8-1.02 2.43-2.8 4.58-5.06 5.94" />
+                            <path d="M1 1l22 22" />
+                          </svg>
+                        ) : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   <div>

@@ -1,0 +1,482 @@
+import crypto from "crypto";
+import mongoose from "mongoose";
+import User from "../models/User.js";
+import { sendLoginOtpEmail } from "./email.service.js";
+
+const OTP_EXPIRY_MINUTES = Number(process.env.LOGIN_OTP_EXPIRY_MINUTES || 5);
+const OTP_EXPIRY_MS = OTP_EXPIRY_MINUTES * 60 * 1000;
+const OTP_MAX_ATTEMPTS = Number(process.env.LOGIN_OTP_MAX_ATTEMPTS || 5);
+
+const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
+const normalizeSource = (value) => String(value || "").trim().toLowerCase();
+const escapeRegex = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const getOtpSecret = () =>
+  String(process.env.OTP_SECRET || process.env.JWT_SECRET || "gitakshmi-dev-otp-secret");
+
+const generateOtp = () => crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
+
+const hashOtp = ({ requestId, email, otp }) =>
+  crypto
+    .createHmac("sha256", getOtpSecret())
+    .update(`${String(requestId).trim()}:${normalizeEmail(email)}:${String(otp).trim()}`)
+    .digest("hex");
+
+const compareHashes = (left, right) => {
+  const leftBuffer = Buffer.from(String(left || ""), "hex");
+  const rightBuffer = Buffer.from(String(right || ""), "hex");
+
+  if (leftBuffer.length === 0 || rightBuffer.length === 0 || leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+const getMongoClient = () => mongoose.connection?.client || null;
+
+const buildOtpState = ({ user, requestId, redirect, otpHash, ipAddress, userAgent, expiresAt }) => ({
+  requestId,
+  otpHash,
+  authSource: user?._source === "hrms_employee" ? "hrms_employee" : "sso_user",
+  redirect: String(redirect || "").trim(),
+  status: "pending",
+  verificationAttempts: 0,
+  maxVerificationAttempts: OTP_MAX_ATTEMPTS,
+  ipAddress: ipAddress ? String(ipAddress).trim() : null,
+  userAgent: userAgent ? String(userAgent).trim() : null,
+  tenantId: user?._tenantId ? String(user._tenantId) : (user?.tenantId ? String(user.tenantId) : null),
+  companyId: user?._companyId ? String(user._companyId) : (user?.companyId ? String(user.companyId) : null),
+  expiresAt,
+  verifiedAt: null,
+  invalidatedAt: null,
+  lastAttemptAt: null,
+  createdAt: new Date()
+});
+
+const getHrmsEmployeeCollection = (tenantId) => {
+  const client = getMongoClient();
+  const normalizedTenantId = String(tenantId || "").trim();
+  if (!client || !normalizedTenantId) {
+    return null;
+  }
+
+  return client.db(`company_${normalizedTenantId}`).collection("employees");
+};
+
+const discoverTenantIds = async () => {
+  const client = getMongoClient();
+  if (!client) {
+    return [];
+  }
+
+  const centralDb = client.db("hrms");
+
+  try {
+    const admin = client.db("admin").admin();
+    const dbs = await admin.listDatabases();
+    return dbs.databases
+      .map((db) => db.name)
+      .filter((name) => name.startsWith("company_"))
+      .map((name) => name.replace("company_", ""));
+  } catch (_error) {
+    const tenants = await centralDb.collection("tenants").find({}).toArray();
+    return tenants.map((tenant) => String(tenant._id));
+  }
+};
+
+const resolveCompanyIdFromTenant = async (tenantId) => {
+  const client = getMongoClient();
+  if (!client || !tenantId) {
+    return String(tenantId || "").trim() || null;
+  }
+
+  try {
+    const tenantRegistry = await client.db("hrms").collection("tenants").findOne({
+      _id: mongoose.Types.ObjectId.isValid(tenantId)
+        ? new mongoose.Types.ObjectId(tenantId)
+        : tenantId
+    });
+
+    if (!tenantRegistry) {
+      return String(tenantId).trim();
+    }
+
+    return String(
+      tenantRegistry.externalCompanyId || tenantRegistry.companyId || tenantRegistry._id || tenantId
+    ).trim();
+  } catch (_error) {
+    return String(tenantId).trim();
+  }
+};
+
+const persistSsoOtpState = async ({ userId, otpState }) => {
+  if (otpState) {
+    await User.collection.updateOne({ _id: userId }, { $set: { loginOtp: otpState } });
+    return;
+  }
+
+  await User.collection.updateOne({ _id: userId }, { $unset: { loginOtp: "" } });
+};
+
+const persistHrmsEmployeeOtpState = async ({ employeeId, tenantId, otpState }) => {
+  const collection = getHrmsEmployeeCollection(tenantId);
+  if (!collection) {
+    throw new Error("Tenant employee collection is unavailable");
+  }
+
+  if (otpState) {
+    await collection.updateOne({ _id: employeeId }, { $set: { loginOtp: otpState } });
+    return;
+  }
+
+  await collection.updateOne({ _id: employeeId }, { $unset: { loginOtp: "" } });
+};
+
+const buildSsoUserAdapter = (userDoc) => ({
+  email: normalizeEmail(userDoc?.email),
+  otpState: userDoc?.loginOtp || null,
+  persist: async (nextOtpState) => persistSsoOtpState({ userId: userDoc._id, otpState: nextOtpState }),
+  buildUser: async () => ({
+    _id: userDoc._id,
+    id: String(userDoc._id),
+    name: String(userDoc.name || "").trim(),
+    email: normalizeEmail(userDoc.email),
+    role: String(userDoc.role || "").trim(),
+    companyId: userDoc.companyId ? String(userDoc.companyId) : null,
+    tenantId: userDoc.tenantId ? String(userDoc.tenantId) : null,
+    permissions: Array.isArray(userDoc.permissions) ? userDoc.permissions : [],
+    _source: "sso_user"
+  })
+});
+
+const buildVirtualHrmsUser = ({ employee, tenantId, companyId }) => {
+  const firstName = String(employee?.firstName || "").trim();
+  const lastName = String(employee?.lastName || "").trim();
+  const fullName = [firstName, lastName].filter(Boolean).join(" ") || normalizeEmail(employee?.email).split("@")[0];
+
+  return {
+    _id: employee._id,
+    id: String(employee._id),
+    name: fullName,
+    email: normalizeEmail(employee.email),
+    role: String(employee.role || "employee").trim().toLowerCase(),
+    companyId: mongoose.Types.ObjectId.isValid(String(companyId || ""))
+      ? new mongoose.Types.ObjectId(String(companyId))
+      : null,
+    tenantId: mongoose.Types.ObjectId.isValid(String(tenantId || ""))
+      ? new mongoose.Types.ObjectId(String(tenantId))
+      : null,
+    permissions: [],
+    _source: "hrms_employee",
+    _tenantId: String(tenantId || "").trim() || null,
+    _companyId: String(companyId || "").trim() || null
+  };
+};
+
+const buildHrmsEmployeeAdapter = ({ employeeDoc, tenantId }) => ({
+  email: normalizeEmail(employeeDoc?.email),
+  otpState: employeeDoc?.loginOtp || null,
+  persist: async (nextOtpState) =>
+    persistHrmsEmployeeOtpState({
+      employeeId: employeeDoc._id,
+      tenantId,
+      otpState: nextOtpState
+    }),
+  buildUser: async () =>
+    buildVirtualHrmsUser({
+      employee: employeeDoc,
+      tenantId,
+      companyId: employeeDoc?.loginOtp?.companyId || (await resolveCompanyIdFromTenant(tenantId))
+    })
+});
+
+const findSsoUserOtpRecord = async ({ email, requestId }) => {
+  const userDoc = await User.collection.findOne(
+    { email: normalizeEmail(email) },
+    {
+      projection: {
+        _id: 1,
+        name: 1,
+        email: 1,
+        role: 1,
+        companyId: 1,
+        tenantId: 1,
+        permissions: 1,
+        loginOtp: 1
+      }
+    }
+  );
+
+  if (!userDoc?.loginOtp || String(userDoc.loginOtp.requestId || "").trim() !== String(requestId || "").trim()) {
+    return null;
+  }
+
+  return buildSsoUserAdapter(userDoc);
+};
+
+const findHrmsEmployeeOtpRecord = async ({ email, requestId, tenantId }) => {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedRequestId = String(requestId || "").trim();
+  const tenantIds = tenantId ? [String(tenantId).trim()] : await discoverTenantIds();
+
+  for (const currentTenantId of tenantIds) {
+    if (!currentTenantId) {
+      continue;
+    }
+
+    const collection = getHrmsEmployeeCollection(currentTenantId);
+    if (!collection) {
+      continue;
+    }
+
+    const employeeDoc = await collection.findOne(
+      {
+        email: {
+          $regex: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i")
+        }
+      },
+      {
+        projection: {
+          _id: 1,
+          firstName: 1,
+          lastName: 1,
+          email: 1,
+          role: 1,
+          loginOtp: 1
+        }
+      }
+    );
+
+    if (!employeeDoc?.loginOtp) {
+      continue;
+    }
+
+    if (String(employeeDoc.loginOtp.requestId || "").trim() !== normalizedRequestId) {
+      continue;
+    }
+
+    return buildHrmsEmployeeAdapter({
+      employeeDoc,
+      tenantId: currentTenantId
+    });
+  }
+
+  return null;
+};
+
+const findOtpRecord = async ({ email, requestId, source, tenantId }) => {
+  const normalizedSource = normalizeSource(source);
+
+  if (normalizedSource === "sso_user") {
+    return findSsoUserOtpRecord({ email, requestId });
+  }
+
+  if (normalizedSource === "hrms_employee") {
+    return findHrmsEmployeeOtpRecord({ email, requestId, tenantId });
+  }
+
+  return (
+    (await findSsoUserOtpRecord({ email, requestId })) ||
+    (await findHrmsEmployeeOtpRecord({ email, requestId, tenantId }))
+  );
+};
+
+export const createLoginOtpChallenge = async ({
+  user,
+  redirect,
+  ipAddress,
+  userAgent
+}) => {
+  const email = normalizeEmail(user?.email);
+  if (!email) {
+    throw new Error("User email is required to create OTP");
+  }
+
+  const requestId = crypto.randomUUID();
+  const otp = generateOtp();
+  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
+  const otpState = buildOtpState({
+    user,
+    requestId,
+    redirect,
+    otpHash: hashOtp({ requestId, email, otp }),
+    ipAddress,
+    userAgent,
+    expiresAt
+  });
+
+  const authSource = otpState.authSource;
+  const tenantId = otpState.tenantId || null;
+
+  if (authSource === "hrms_employee") {
+    await persistHrmsEmployeeOtpState({
+      employeeId: user._id,
+      tenantId,
+      otpState
+    });
+  } else {
+    await persistSsoOtpState({
+      userId: user._id,
+      otpState
+    });
+  }
+
+  try {
+    const delivery = await sendLoginOtpEmail({
+      to: email,
+      otp,
+      expiresInMinutes: OTP_EXPIRY_MINUTES
+    });
+
+    return {
+      requestId,
+      email,
+      source: authSource,
+      tenantId,
+      deliveryMode: delivery.deliveryMode,
+      devOtpPreview: delivery.previewOtp,
+      expiresInSeconds: Math.floor(OTP_EXPIRY_MS / 1000)
+    };
+  } catch (error) {
+    if (authSource === "hrms_employee") {
+      await persistHrmsEmployeeOtpState({
+        employeeId: user._id,
+        tenantId,
+        otpState: null
+      });
+    } else {
+      await persistSsoOtpState({
+        userId: user._id,
+        otpState: null
+      });
+    }
+
+    throw error;
+  }
+};
+
+export const verifyLoginOtpChallenge = async ({
+  email,
+  requestId,
+  otp,
+  source,
+  tenantId
+}) => {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedRequestId = String(requestId || "").trim();
+  const normalizedOtp = String(otp || "").trim();
+
+  if (!normalizedEmail || !normalizedRequestId || !normalizedOtp) {
+    return {
+      error: {
+        status: 400,
+        reason: "missing_fields",
+        message: "Email, OTP, and otpRequestId are required"
+      }
+    };
+  }
+
+  const record = await findOtpRecord({
+    email: normalizedEmail,
+    requestId: normalizedRequestId,
+    source,
+    tenantId
+  });
+
+  if (!record?.otpState || record.otpState.status !== "pending") {
+    return {
+      error: {
+        status: 400,
+        reason: "request_invalid",
+        message: "Invalid or expired OTP request"
+      }
+    };
+  }
+
+  const currentOtpState = record.otpState;
+  const now = new Date();
+
+  if (new Date(currentOtpState.expiresAt).getTime() <= Date.now()) {
+    await record.persist({
+      ...currentOtpState,
+      status: "expired",
+      invalidatedAt: now,
+      lastAttemptAt: now,
+      otpHash: null
+    });
+
+    return {
+      error: {
+        status: 400,
+        reason: "otp_expired",
+        message: "OTP has expired"
+      }
+    };
+  }
+
+  if (Number(currentOtpState.verificationAttempts || 0) >= Number(currentOtpState.maxVerificationAttempts || OTP_MAX_ATTEMPTS)) {
+    await record.persist({
+      ...currentOtpState,
+      status: "locked",
+      invalidatedAt: now,
+      lastAttemptAt: now,
+      otpHash: null
+    });
+
+    return {
+      error: {
+        status: 429,
+        reason: "otp_locked",
+        message: "OTP verification is locked. Please request a new OTP."
+      }
+    };
+  }
+
+  const expectedOtpHash = hashOtp({
+    requestId: normalizedRequestId,
+    email: normalizedEmail,
+    otp: normalizedOtp
+  });
+
+  if (!compareHashes(expectedOtpHash, currentOtpState.otpHash)) {
+    const nextAttempts = Number(currentOtpState.verificationAttempts || 0) + 1;
+    const nextStatus =
+      nextAttempts >= Number(currentOtpState.maxVerificationAttempts || OTP_MAX_ATTEMPTS)
+        ? "locked"
+        : "pending";
+
+    await record.persist({
+      ...currentOtpState,
+      verificationAttempts: nextAttempts,
+      status: nextStatus,
+      lastAttemptAt: now,
+      invalidatedAt: nextStatus === "locked" ? now : currentOtpState.invalidatedAt || null
+    });
+
+    return {
+      error: {
+        status: nextStatus === "locked" ? 429 : 400,
+        reason: nextStatus === "locked" ? "otp_locked" : "otp_invalid",
+        message:
+          nextStatus === "locked"
+            ? "Too many invalid OTP attempts. Please request a new OTP."
+            : "Invalid OTP"
+      }
+    };
+  }
+
+  await record.persist({
+    ...currentOtpState,
+    status: "verified",
+    verifiedAt: now,
+    lastAttemptAt: now,
+    otpHash: null
+  });
+
+  return {
+    user: await record.buildUser(),
+    redirect: currentOtpState.redirect,
+    email: record.email
+  };
+};
