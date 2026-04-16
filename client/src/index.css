@@ -63,7 +63,7 @@ p {
   border: 1px solid #dce6f3;
   border-radius: 16px;
   padding: 20px;
-  box-shadow: 0 10px 22px rgba(16, 34, 56, 0.08);
+  box-shadow: none;
   display: grid;
   gap: 10px;
 }

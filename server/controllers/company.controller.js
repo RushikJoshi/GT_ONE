@@ -3,6 +3,7 @@ import User from "../models/User.js";
 import Product from "../models/Product.js";
 import CompanyProduct from "../models/CompanyProduct.js";
 import { ROLES } from "../constants/roles.js";
+import bcrypt from "bcryptjs";
 import {
   createCompanyWithAdmin,
   getCompanyHrmsModulesById,
@@ -12,13 +13,31 @@ import { syncCompanyToHrms } from "../services/hrmsProvisioning.service.js";
 
 const normalizeProductNames = (products) => {
   return Array.isArray(products)
-    ? products.map((product) => String(product).toUpperCase()).filter(Boolean)
+    ? products
+        .map((product) => String(product || "").trim().toUpperCase())
+        .filter(Boolean)
     : [];
 };
 
 export const createCompany = async (req, res) => {
   try {
-    const { name, email, adminName, adminEmail, adminPassword, products } = req.body || {};
+    const {
+      name,
+      email,
+      adminName,
+      adminEmail,
+      adminPassword,
+      products,
+      phone,
+      companyType,
+      gstNumber,
+      panNumber,
+      registrationNo,
+      country,
+      state,
+      officeAddress,
+      subCompanyLimit
+    } = req.body || {};
 
     if (!name || !email) {
       return res.status(400).json({ message: "name and email are required" });
@@ -30,6 +49,15 @@ export const createCompany = async (req, res) => {
       adminName,
       adminEmail,
       adminPassword,
+      phone,
+      companyType,
+      gstNumber,
+      panNumber,
+      registrationNo,
+      country,
+      state,
+      officeAddress,
+      subCompanyLimit,
       products: products || []
     });
 
@@ -92,12 +120,146 @@ export const listCompanies = async (_req, res) => {
     const data = companies.map((company) => ({
       ...company,
       admin: adminsByCompany.get(String(company._id)) || null,
-      products: productsByCompany.get(String(company._id)) || []
+      products: productsByCompany.get(String(company._id)) || [],
+      status: company.isActive ? "ACTIVE" : "INACTIVE"
     }));
 
     return res.json({ companies: data });
   } catch (error) {
     console.error("[COMPANY][LIST] Failed to list companies:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+export const updateCompany = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const {
+      name,
+      email,
+      code,
+      phone,
+      companyType,
+      gstNumber,
+      panNumber,
+      registrationNo,
+      country,
+      state,
+      officeAddress,
+      subCompanyLimit,
+      adminName,
+      adminPassword
+    } = req.body || {};
+
+    const company = await Company.findById(companyId);
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" });
+    }
+
+    const normalizedName = String(name ?? company.name).trim();
+    const normalizedEmail = String(email ?? company.email).trim().toLowerCase();
+    const normalizedCode = code === undefined ? company.code : String(code || "").trim() || null;
+
+    if (!normalizedName || !normalizedEmail) {
+      return res.status(400).json({ message: "name and email are required" });
+    }
+
+    const emailOwner = await Company.findOne({ email: normalizedEmail }).select("_id").lean();
+    if (emailOwner && String(emailOwner._id) !== String(company._id)) {
+      return res.status(400).json({ message: "Company email already exists" });
+    }
+
+    company.name = normalizedName;
+    company.email = normalizedEmail;
+    company.code = normalizedCode;
+    company.companyCode = normalizedCode;
+    if (phone !== undefined) company.phone = String(phone || "").trim() || null;
+    if (companyType !== undefined) company.companyType = String(companyType || "").trim() || null;
+    if (gstNumber !== undefined) company.gstNumber = String(gstNumber || "").trim() || null;
+    if (panNumber !== undefined) company.panNumber = String(panNumber || "").trim() || null;
+    if (registrationNo !== undefined) company.registrationNo = String(registrationNo || "").trim() || null;
+    if (country !== undefined) company.country = String(country || "").trim() || null;
+    if (state !== undefined) company.state = String(state || "").trim() || null;
+    if (officeAddress !== undefined) company.officeAddress = String(officeAddress || "").trim() || null;
+    if (subCompanyLimit !== undefined) {
+      const n = Number(subCompanyLimit);
+      company.subCompanyLimit = Number.isFinite(n) ? n : null;
+    }
+    await company.save();
+
+    const normalizedAdminName =
+      adminName === undefined ? null : String(adminName || "").trim() || null;
+    const normalizedAdminPassword =
+      adminPassword === undefined ? null : String(adminPassword || "").trim() || null;
+
+    if (normalizedAdminName || normalizedAdminPassword) {
+      const adminUser = await User.findOne({
+        role: ROLES.COMPANY_ADMIN,
+        companyId: company._id
+      });
+
+      if (adminUser) {
+        if (normalizedAdminName) adminUser.name = normalizedAdminName;
+        if (normalizedAdminPassword) {
+          adminUser.password = await bcrypt.hash(normalizedAdminPassword, 10);
+        }
+        await adminUser.save();
+      }
+    }
+
+    return res.json({ message: "Company updated successfully", company: company.toObject() });
+  } catch (error) {
+    console.error("[COMPANY][UPDATE] Failed:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+export const deleteCompany = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+
+    const company = await Company.findById(companyId).lean();
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" });
+    }
+
+    await Promise.all([
+      CompanyProduct.deleteMany({ companyId }),
+      User.deleteMany({ companyId }),
+      Company.deleteOne({ _id: companyId })
+    ]);
+
+    return res.json({ message: "Company deleted successfully" });
+  } catch (error) {
+    console.error("[COMPANY][DELETE] Failed:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+export const setCompanyActiveStatus = async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { isActive } = req.body || {};
+
+    if (typeof isActive !== "boolean") {
+      return res.status(400).json({ message: "isActive must be boolean" });
+    }
+
+    const company = await Company.findById(companyId);
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" });
+    }
+
+    company.isActive = isActive;
+    await company.save();
+
+    return res.json({
+      message: `Company ${isActive ? "activated" : "deactivated"} successfully`,
+      company: company.toObject(),
+      status: company.isActive ? "ACTIVE" : "INACTIVE"
+    });
+  } catch (error) {
+    console.error("[COMPANY][STATUS] Failed:", error);
     return res.status(500).json({ message: error.message });
   }
 };
@@ -113,7 +275,10 @@ export const assignCompanyProducts = async (req, res) => {
     }
 
     const normalizedProducts = normalizeProductNames(products);
-    const productDocs = await Product.find({ name: { $in: normalizedProducts } });
+    const productDocs = await Product.find({ name: { $in: normalizedProducts } }).collation({
+      locale: "en",
+      strength: 2
+    });
 
     if (normalizedProducts.length !== productDocs.length) {
       return res.status(400).json({ message: "Invalid product selection" });

@@ -12,16 +12,35 @@ import { syncCompanyToHrms } from "./hrmsProvisioning.service.js";
 
 const normalizeProductNames = (products) =>
   Array.isArray(products)
-    ? products.map((product) => String(product).toUpperCase()).filter(Boolean)
+    ? products
+        .map((product) => String(product || "").trim().toUpperCase())
+        .filter(Boolean)
     : [];
 
-const generateCompanyCode = ({ name, email }) => {
+const generateCompanyCode = async ({ name, email }) => {
   const source = String(name || email || "")
     .replace(/[^a-zA-Z0-9]/g, "")
     .toUpperCase();
-  const prefix = source.slice(0, 6) || "TENANT";
-  const suffix = Date.now().toString().slice(-4);
-  return `${prefix}${suffix}`;
+
+  const prefix = (source.slice(0, 3) || "COM").padEnd(3, "X");
+
+  const existing = await Company.find(
+    { code: { $regex: new RegExp(`^${prefix}\\d{3}$`, "i") } },
+    { code: 1 }
+  )
+    .lean()
+    .exec();
+
+  let max = 0;
+  for (const item of existing) {
+    const code = String(item?.code || "").toUpperCase();
+    const suffix = code.slice(prefix.length);
+    const n = Number.parseInt(suffix, 10);
+    if (Number.isFinite(n)) max = Math.max(max, n);
+  }
+
+  const next = String(max + 1).padStart(3, "0");
+  return `${prefix}${next}`;
 };
 
 export const createCompanyWithAdmin = async ({
@@ -30,6 +49,15 @@ export const createCompanyWithAdmin = async ({
   adminName,
   adminEmail,
   adminPassword,
+  phone,
+  companyType,
+  gstNumber,
+  panNumber,
+  registrationNo,
+  country,
+  state,
+  officeAddress,
+  subCompanyLimit,
   products = []
 }) => {
   const normalizedName = String(name || "").trim();
@@ -61,17 +89,19 @@ export const createCompanyWithAdmin = async ({
   let productDocs = [];
   
   if (selectedProducts.length > 0) {
-    productDocs = await Product.find({ name: { $in: selectedProducts } });
+    productDocs = await Product.find({ name: { $in: selectedProducts } }).collation({
+      locale: "en",
+      strength: 2
+    });
     if (selectedProducts.length !== productDocs.length) {
       return { error: { status: 400, message: "Invalid product selection" } };
     }
   } else {
-    // If no products provided from UI, default to giving ALL available products
-    productDocs = await Product.find({});
+    return { error: { status: 400, message: "Select at least one product" } };
   }
 
   const defaultHrms = normalizeHrmsModuleSettings(undefined, undefined);
-  const generatedCompanyCode = generateCompanyCode({
+  const generatedCompanyCode = await generateCompanyCode({
     name: normalizedName,
     email: normalizedCompanyEmail
   });
@@ -81,6 +111,19 @@ export const createCompanyWithAdmin = async ({
     email: normalizedCompanyEmail,
     code: generatedCompanyCode,
     companyCode: generatedCompanyCode,
+    phone: phone ? String(phone).trim() : null,
+    companyType: companyType ? String(companyType).trim() : null,
+    gstNumber: gstNumber ? String(gstNumber).trim() : null,
+    panNumber: panNumber ? String(panNumber).trim() : null,
+    registrationNo: registrationNo ? String(registrationNo).trim() : null,
+    country: country ? String(country).trim() : null,
+    state: state ? String(state).trim() : null,
+    officeAddress: officeAddress ? String(officeAddress).trim() : null,
+    subCompanyLimit: subCompanyLimit === undefined || subCompanyLimit === null || subCompanyLimit === ""
+      ? null
+      : Number.isFinite(Number(subCompanyLimit))
+        ? Number(subCompanyLimit)
+        : null,
     hrmsEnabledModules: defaultHrms.hrmsEnabledModules,
     hrmsModules: defaultHrms.hrmsModules
   });
@@ -114,18 +157,38 @@ export const createCompanyWithAdmin = async ({
     );
   }
 
-  const provisioning = await syncCompanyToHrms({
-    company,
-    products: productDocs.map((product) => product.name),
-    adminName: companyAdmin.name,
-    adminEmail: companyAdmin.email,
-    source: "create_company"
-  });
+  const selectedProductNames = productDocs.map((product) => product.name);
+  const hasHrms = selectedProductNames.some((p) => String(p).toUpperCase() === "HRMS");
+  let provisioning = {
+    warning: true,
+    skipped: true,
+    message: "HRMS not selected; provisioning skipped"
+  };
+
+  // Provisioning should never block company creation.
+  if (hasHrms) {
+    try {
+      provisioning = await syncCompanyToHrms({
+        company,
+        products: selectedProductNames,
+        adminName: companyAdmin.name,
+        adminEmail: companyAdmin.email,
+        source: "create_company"
+      });
+    } catch (error) {
+      provisioning = {
+        success: false,
+        warning: true,
+        skipped: false,
+        message: error?.message || "HRMS provisioning failed"
+      };
+    }
+  }
 
   return {
     company,
     companyAdmin,
-    products: productDocs.map((product) => product.name),
+    products: selectedProductNames,
     adminPlainPassword: adminUserPassword,
     provisioning
   };

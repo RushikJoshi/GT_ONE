@@ -3,6 +3,9 @@ import {
   createCompany,
   listCompanies,
   assignCompanyProducts,
+  updateCompany,
+  deleteCompany,
+  setCompanyActiveStatus,
   getCompanyHrmsModules,
   updateCompanyHrmsModules
 } from "../controllers/company.controller.js";
@@ -15,6 +18,9 @@ router.use(verifyToken, authorizeRoles(ROLES.SUPER_ADMIN));
 
 router.get("/", listCompanies);
 router.post("/", createCompany);
+router.put("/:companyId", updateCompany);
+router.delete("/:companyId", deleteCompany);
+router.patch("/:companyId/status", setCompanyActiveStatus);
 router.put("/:companyId/products", assignCompanyProducts);
 router.get("/:id/hrms-modules", getCompanyHrmsModules);
 router.put("/:id/hrms-modules", updateCompanyHrmsModules);
