@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { createPortal } from "react-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import api from "../lib/api";
 import AdminLayout from "../components/AdminLayout";
@@ -10,15 +11,26 @@ const defaultCreateForm = {
   adminName: "",
   adminEmail: "",
   adminPassword: "",
+  phone: "",
+  companyType: "",
+  gstNumber: "",
+  panNumber: "",
+  registrationNo: "",
+  country: "",
+  state: "",
+  officeAddress: "",
+  subCompanyLimit: "",
   products: []
 };
 
 function Dashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("company");
   const [products, setProducts] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [form, setForm] = useState(defaultCreateForm);
+  const [companyLogoPreview, setCompanyLogoPreview] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
@@ -46,6 +58,18 @@ function Dashboard() {
     loadData();
   }, []);
 
+  // When user opens MODULES tab, jump directly to the manage screen (2nd screenshot UI).
+  // "Change Company" on that page can bring them back to list/dashboard.
+  const didAutoOpenModulesRef = React.useRef(false);
+  useEffect(() => {
+    if (activeTab !== "products") return;
+    if (didAutoOpenModulesRef.current) return;
+    const firstCompanyId = companies?.[0]?._id;
+    if (!firstCompanyId) return;
+    didAutoOpenModulesRef.current = true;
+    navigate(`/companies/${firstCompanyId}/products`);
+  }, [activeTab, companies, navigate]);
+
   const updateField = (event) => {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -67,8 +91,9 @@ function Dashboard() {
 
     try {
       setSubmitting(true);
-      await api.post("/companies", form);
+      await api.post("/companies", { ...form, adminEmail: form.adminEmail || form.email });
       setForm(defaultCreateForm);
+      setCompanyLogoPreview("");
       setMessage("Company created successfully");
       await loadData();
     } catch (requestError) {
@@ -80,12 +105,41 @@ function Dashboard() {
 
   const [selectedCompany, setSelectedCompany] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editCompany, setEditCompany] = useState(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    email: "",
+    adminName: "",
+    adminPassword: "",
+    code: "",
+    phone: "",
+    companyType: "",
+    gstNumber: "",
+    panNumber: "",
+    registrationNo: "",
+    country: "",
+    state: "",
+    officeAddress: "",
+    subCompanyLimit: "",
+    products: []
+  });
+  const [editCompanyLogoPreview, setEditCompanyLogoPreview] = useState("");
+  const [companySearch, setCompanySearch] = useState("");
+  const [companyPage, setCompanyPage] = useState(1);
+  const [expandedCompanyProducts, setExpandedCompanyProducts] = useState(() => new Set());
   const [currentActivityPage, setCurrentActivityPage] = useState(1);
+  const [activitySearch, setActivitySearch] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [productTabCompany, setProductTabCompany] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editProducts, setEditProducts] = useState([]);
   const activitiesPerPage = 10;
+
+  const renderInBody = (node) => {
+    if (typeof document === "undefined") return null;
+    return createPortal(node, document.body);
+  };
 
   if (loading) {
     return (
@@ -144,6 +198,147 @@ function Dashboard() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const openEditCompany = (company) => {
+    setEditCompany(company);
+    setEditForm({
+      name: company?.name || "",
+      email: company?.email || "",
+      adminName: company?.admin?.name || "",
+      adminPassword: "",
+      code: company?.code || company?.companyCode || "",
+      phone: company?.phone || "",
+      companyType: company?.companyType || "",
+      gstNumber: company?.gstNumber || "",
+      panNumber: company?.panNumber || "",
+      registrationNo: company?.registrationNo || "",
+      country: company?.country || "",
+      state: company?.state || "",
+      officeAddress: company?.officeAddress || "",
+      subCompanyLimit:
+        company?.subCompanyLimit === null || company?.subCompanyLimit === undefined
+          ? ""
+          : String(company.subCompanyLimit)
+      ,
+      products: Array.isArray(company?.products) ? company.products : []
+    });
+    setEditCompanyLogoPreview("");
+    setShowEditModal(true);
+  };
+
+  const saveCompanyEdits = async (event) => {
+    event?.preventDefault?.();
+    if (!editCompany?._id) return;
+    setMessage("");
+    setError("");
+
+    try {
+      setSubmitting(true);
+      const payload = {
+        name: editForm.name,
+        email: editForm.email,
+        code: editForm.code,
+        phone: editForm.phone,
+        companyType: editForm.companyType,
+        gstNumber: editForm.gstNumber,
+        panNumber: editForm.panNumber,
+        registrationNo: editForm.registrationNo,
+        country: editForm.country,
+        state: editForm.state,
+        officeAddress: editForm.officeAddress,
+        subCompanyLimit: editForm.subCompanyLimit,
+        adminName: editForm.adminName,
+        adminPassword: editForm.adminPassword
+      };
+
+      const [res, productsRes] = await Promise.all([
+        api.put(`/companies/${editCompany._id}`, payload),
+        api.put(`/companies/${editCompany._id}/products`, { products: editForm.products || [] })
+      ]);
+
+      const updated = res?.data?.company;
+      if (updated?._id) {
+        const nextProducts = productsRes?.data?.products || editForm.products || [];
+        setCompanies((prev) =>
+          prev.map((c) =>
+            c._id === updated._id
+              ? {
+                  ...c,
+                  ...updated,
+                  status: updated.isActive ? "ACTIVE" : "INACTIVE",
+                  products: nextProducts,
+                  admin: c?.admin ? { ...c.admin, name: editForm.adminName || c.admin.name } : c.admin
+                }
+              : c
+          )
+        );
+      } else {
+        await loadData();
+      }
+      setShowEditModal(false);
+      setEditCompany(null);
+      setMessage("Company updated successfully");
+      setTimeout(() => setMessage(""), 3000);
+    } catch (err) {
+      setError(err?.response?.data?.message || "Failed to update company");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const deleteCompanyById = async (company) => {
+    if (!company?._id) return;
+    const ok = window.confirm(`Delete company "${company.name}"? This will remove the company and its admin users.`);
+    if (!ok) return;
+
+    setMessage("");
+    setError("");
+    try {
+      setSubmitting(true);
+      await api.delete(`/companies/${company._id}`);
+      setCompanies((prev) => prev.filter((c) => c._id !== company._id));
+      if (selectedCompany?._id === company._id) setSelectedCompany(null);
+      if (productTabCompany?._id === company._id) setProductTabCompany(null);
+      setMessage("Company deleted successfully");
+      setTimeout(() => setMessage(""), 3000);
+    } catch (err) {
+      setError(err?.response?.data?.message || "Failed to delete company");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const toggleCompanyActive = async (company) => {
+    if (!company?._id) return;
+    setMessage("");
+    setError("");
+    try {
+      setSubmitting(true);
+      const nextActive = !company.isActive;
+      const res = await api.patch(`/companies/${company._id}/status`, { isActive: nextActive });
+      const updated = res?.data?.company;
+      setCompanies((prev) =>
+        prev.map((c) =>
+          c._id === company._id
+            ? { ...c, ...updated, status: nextActive ? "ACTIVE" : "INACTIVE" }
+            : c
+        )
+      );
+    } catch (err) {
+      setError(err?.response?.data?.message || "Failed to update status");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const toggleExpandedProducts = (companyId) => {
+    setExpandedCompanyProducts((prev) => {
+      const next = new Set(prev);
+      if (next.has(companyId)) next.delete(companyId);
+      else next.add(companyId);
+      return next;
+    });
   };
 
   const renderTabContent = () => {
@@ -331,11 +526,67 @@ function Dashboard() {
         );
       case "company":
         if (!selectedCompany) {
+          const searchValue = String(companySearch || "").trim().toLowerCase();
+          const filteredCompanies = searchValue
+            ? companies.filter((company) => {
+                const name = String(company?.name || "").toLowerCase();
+                const code = String(company?.code || company?.companyCode || "").toLowerCase();
+                return name.includes(searchValue) || code.includes(searchValue);
+              })
+            : companies;
+
+          const companiesPerPage = 10;
+          const totalCompanyPages = Math.max(1, Math.ceil(filteredCompanies.length / companiesPerPage));
+          const safeCompanyPage = Math.min(companyPage, totalCompanyPages);
+          const companyStartIndex = (safeCompanyPage - 1) * companiesPerPage;
+          const pagedCompanies = filteredCompanies.slice(companyStartIndex, companyStartIndex + companiesPerPage);
+
+          const totalCompanies = companies.length;
+          const activeCompanies = companies.filter((c) => c.isActive ?? c.status === 'ACTIVE').length;
+          const inactiveCompanies = totalCompanies - activeCompanies;
+          const totalProducts = products.length;
+
           return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'fadeIn 0.3s ease-out' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#ffffff', padding: '16px 24px', borderRadius: '0px', border: '1px solid #e2e8f0' }}>
-                 <div>
-                    <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>Registered Organizations</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', animation: 'fadeIn 0.3s ease-out' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '12px' }}>
+                <div className="card" style={{ padding: '14px 16px', borderLeft: '4px solid #2563eb', background: 'linear-gradient(to right, #eff6ff, #ffffff)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 900, letterSpacing: '0.12em', color: '#64748b', textTransform: 'uppercase' }}>Total Company</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#0f172a', marginTop: '4px' }}>{totalCompanies}</div>
+                </div>
+                <div className="card" style={{ padding: '14px 16px', borderLeft: '4px solid #059669', background: 'linear-gradient(to right, #f0fdf4, #ffffff)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 900, letterSpacing: '0.12em', color: '#64748b', textTransform: 'uppercase' }}>Active Company</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#059669', marginTop: '4px' }}>{activeCompanies}</div>
+                </div>
+                <div className="card" style={{ padding: '14px 16px', borderLeft: '4px solid #f59e0b', background: 'linear-gradient(to right, #fffbeb, #ffffff)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 900, letterSpacing: '0.12em', color: '#64748b', textTransform: 'uppercase' }}>Inactive Company</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#d97706', marginTop: '4px' }}>{inactiveCompanies}</div>
+                </div>
+                <div className="card" style={{ padding: '14px 16px', borderLeft: '4px solid #4f46e5', background: 'linear-gradient(to right, #eef2ff, #ffffff)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 900, letterSpacing: '0.12em', color: '#64748b', textTransform: 'uppercase' }}>Total Product</div>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#4f46e5', marginTop: '4px' }}>{totalProducts}</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'transparent', padding: '0 0 6px', borderRadius: 0, border: 'none' }}>
+                 <div style={{ flex: 1, maxWidth: '520px' }}>
+                    <input
+                      value={companySearch}
+                      onChange={(e) => {
+                        setCompanySearch(e.target.value);
+                        setCompanyPage(1);
+                      }}
+                      placeholder="Search by company name or code"
+                      style={{
+                        width: '100%',
+                        padding: '12px 14px',
+                        borderRadius: '12px',
+                        border: '1px solid #e2e8f0',
+                        background: '#ffffff',
+                        outline: 'none',
+                        fontWeight: 600,
+                        color: '#0f172a'
+                      }}
+                    />
                  </div>
                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                     <button 
@@ -343,71 +594,314 @@ function Dashboard() {
                       style={{ 
                         background: '#2563eb', color: 'white', padding: '10px 16px', borderRadius: '10px', 
                         fontWeight: 800, fontSize: '0.85rem', border: 'none', cursor: 'pointer', 
-                        display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.2)'
+                        display: 'flex', alignItems: 'center', gap: '8px'
                       }}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                       </svg>
-                      Register Company
+                      Create Company
                     </button>
-                    <div style={{ width: '1px', height: '32px', background: '#e2e8f0', margin: '0 4px' }} />
-                    <div style={{ textAlign: 'right' }}>
-                       <div style={{ fontSize: '1.1rem', fontWeight: 900, color: '#2563eb' }}>{companies.reduce((acc, c) => acc + (c.products?.length || 0), 0)}</div>
-                       <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Active Licenses</div>
-                    </div>
                  </div>
               </div>
 
               <div className="card" style={{ padding: '0', overflow: 'hidden', border: '1px solid #eef2f6', borderRadius: 0 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 120px', padding: '12px 24px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Client Entity</div>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Module Suite</div>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', textAlign: 'right' }}>Management</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 120px 1.2fr 1fr 120px 200px', padding: '10px 24px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', gap: '12px' }}>
+                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Company Name</div>
+                   <div style={{ fontSize: '10px', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Code</div>
+                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Company Mail</div>
+                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Products</div>
+                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Status</div>
+                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', textAlign: 'right' }}>Action</div>
                 </div>
                 <div style={{ maxHeight: 'calc(100vh - 280px)', overflowY: 'auto' }}>
-                  {companies.map((company) => (
+                  {pagedCompanies.map((company) => (
                     <div 
                       key={company._id} 
-                      onClick={() => handleSelectCompany(company)}
                       style={{ 
-                        display: 'grid', gridTemplateColumns: '1.5fr 1fr 120px', padding: '16px 24px', 
-                        alignItems: 'center', borderBottom: '1px solid #f1f5f9', cursor: 'pointer',
-                        transition: 'all 0.2s ease'
+                        display: 'grid',
+                        gridTemplateColumns: '1.3fr 120px 1.2fr 1fr 120px 200px',
+                        gap: '12px',
+                        padding: '16px 24px',
+                        alignItems: 'center',
+                        borderBottom: '1px solid #f1f5f9',
+                        transition: 'background 0.2s ease'
                       }}
                       onMouseOver={(e) => e.currentTarget.style.background = '#f8fafc'}
                       onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                          <div style={{ 
-                           width: '44px', height: '44px', background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', 
+                           width: '36px', height: '36px', background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', 
                            color: '#2563eb', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                           fontWeight: 800, fontSize: '1.1rem' 
+                           fontWeight: 800, fontSize: '0.95rem' 
                          }}>
                            {company.name[0]}
                          </div>
                          <div style={{ overflow: 'hidden' }}>
-                           <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
-                           <p className="muted" style={{ fontSize: '0.75rem', margin: 0 }}>{company.email}</p>
+                           <h4 style={{ margin: 0, fontSize: '12px', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
                          </div>
                       </div>
 
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                        {(company.products || []).slice(0, 3).map(p => (
-                          <span key={p} style={{ fontSize: '10px', fontWeight: 800, padding: '4px 8px', borderRadius: '6px', background: '#f0fdf4', color: '#166534', border: '1.5px solid #dcfce7' }}>{p}</span>
-                        ))}
-                        {(company.products || []).length > 3 && (
-                          <span style={{ fontSize: '10px', fontWeight: 800, padding: '4px 8px', borderRadius: '6px', background: '#eff6ff', color: '#2563eb' }}>+{(company.products || []).length - 3}</span>
-                        )}
-                        {(company.products || []).length === 0 && <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>None Assigned</span>}
+                      <div style={{ fontSize: '10px', fontWeight: 800, color: '#0f172a' }}>
+                        {company.code || company.companyCode || "—"}
                       </div>
 
-                      <div style={{ textAlign: 'right' }}>
-                         <button style={{ background: '#2563eb', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 800, cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.1)' }}>Open Profile</button>
+                      <div style={{ fontSize: '0.85rem', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {company.email}
+                      </div>
+
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                        {(company.products || []).length === 0 ? (
+                          <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>—</span>
+                        ) : (
+                          <>
+                            {(expandedCompanyProducts.has(company._id)
+                              ? (company.products || [])
+                              : (company.products || []).slice(0, 3)
+                            ).map((p) => (
+                              <span
+                                key={p}
+                                style={{
+                                  fontSize: '0.62rem',
+                                  fontWeight: 800,
+                                  padding: '3px 7px',
+                                  borderRadius: '999px',
+                                  background: '#eff6ff',
+                                  color: '#2563eb',
+                                  border: '1px solid #dbeafe'
+                                }}
+                              >
+                                {p}
+                              </span>
+                            ))}
+                            {(company.products || []).length > 3 && !expandedCompanyProducts.has(company._id) && (
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandedProducts(company._id)}
+                                style={{
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  fontSize: '0.62rem',
+                                  fontWeight: 900,
+                                  color: '#64748b'
+                                }}
+                                title="Show all products"
+                              >
+                                +{(company.products || []).length - 3}
+                              </button>
+                            )}
+
+                            {(company.products || []).length > 3 && expandedCompanyProducts.has(company._id) && (
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandedProducts(company._id)}
+                                style={{
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  fontSize: '0.62rem',
+                                  fontWeight: 900,
+                                  color: '#64748b'
+                                }}
+                                title="Show less"
+                              >
+                                Less
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      <div>
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            fontSize: '0.62rem',
+                            fontWeight: 800,
+                            padding: '4px 8px',
+                            borderRadius: '999px',
+                            border: '1px solid',
+                            borderColor: (company.isActive ?? company.status === 'ACTIVE') ? '#bbf7d0' : '#e2e8f0',
+                            background: (company.isActive ?? company.status === 'ACTIVE') ? '#f0fdf4' : '#f8fafc',
+                            color: (company.isActive ?? company.status === 'ACTIVE') ? '#166534' : '#64748b'
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: '5px',
+                              height: '5px',
+                              borderRadius: '50%',
+                              background: (company.isActive ?? company.status === 'ACTIVE') ? '#22c55e' : '#94a3b8'
+                            }}
+                          />
+                          {(company.isActive ?? company.status === 'ACTIVE') ? 'ACTIVE' : 'INACTIVE'}
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'flex-end'
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: 0,
+                            borderRadius: 0,
+                            background: 'transparent',
+                            border: 'none'
+                          }}
+                        >
+                          {/* View */}
+                          <button
+                            type="button"
+                            title="View"
+                            onClick={() => handleSelectCompany(company)}
+                            style={{
+                              border: 'none',
+                              background: 'transparent',
+                              cursor: 'pointer',
+                              padding: 0,
+                              color: '#64748b',
+                              display: 'inline-flex'
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" style={{ display: 'block' }}>
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+                            </svg>
+                          </button>
+
+                          {/* Edit */}
+                          <button
+                            type="button"
+                            title="Edit"
+                            onClick={() => openEditCompany(company)}
+                            style={{
+                              border: 'none',
+                              background: 'transparent',
+                              cursor: 'pointer',
+                              padding: 0,
+                              color: '#64748b',
+                              display: 'inline-flex'
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" style={{ display: 'block' }}>
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 20h9" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                            </svg>
+                          </button>
+
+                          {/* Settings / Modules */}
+                          <button
+                            type="button"
+                            title="Modules"
+                            onClick={() => {
+                              setProductTabCompany(company);
+                              setActiveTab('products');
+                            }}
+                            style={{
+                              border: 'none',
+                              background: 'transparent',
+                              cursor: 'pointer',
+                              padding: 0,
+                              color: '#64748b',
+                              display: 'inline-flex'
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" style={{ display: 'block' }}>
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                          </button>
+
+                          {/* Active / Deactive */}
+                          <button
+                            type="button"
+                            title={(company.isActive ?? true) ? "Deactivate" : "Activate"}
+                            onClick={() => toggleCompanyActive(company)}
+                            style={{
+                              border: 'none',
+                              background: 'transparent',
+                              cursor: 'pointer',
+                              padding: 0,
+                              color: '#64748b',
+                              display: 'inline-flex',
+                              opacity: submitting ? 0.7 : 1
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" style={{ display: 'block' }}>
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 2L3 14h7l-1 8 10-12h-7l1-8Z" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {filteredCompanies.length > companiesPerPage && (
+                  <div
+                    style={{
+                      padding: '12px 16px',
+                      borderTop: '1px solid #f1f5f9',
+                      background: '#ffffff',
+                      display: 'flex',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      gap: '10px'
+                    }}
+                  >
+                    <button
+                      type="button"
+                      disabled={safeCompanyPage === 1}
+                      onClick={() => setCompanyPage((p) => Math.max(1, p - 1))}
+                      style={{
+                        minWidth: '36px',
+                        height: '34px',
+                        borderRadius: '10px',
+                        border: '1px solid #e2e8f0',
+                        background: safeCompanyPage === 1 ? '#f8fafc' : '#ffffff',
+                        color: '#64748b',
+                        fontWeight: 800,
+                        cursor: safeCompanyPage === 1 ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      ‹
+                    </button>
+
+                    <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#475569' }}>
+                      Page {safeCompanyPage} of {totalCompanyPages}
+                    </span>
+
+                    <button
+                      type="button"
+                      disabled={safeCompanyPage === totalCompanyPages}
+                      onClick={() => setCompanyPage((p) => Math.min(totalCompanyPages, p + 1))}
+                      style={{
+                        minWidth: '36px',
+                        height: '34px',
+                        borderRadius: '10px',
+                        border: '1px solid #e2e8f0',
+                        background: safeCompanyPage === totalCompanyPages ? '#f8fafc' : '#ffffff',
+                        color: '#64748b',
+                        fontWeight: 800,
+                        cursor: safeCompanyPage === totalCompanyPages ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      ›
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -574,59 +1068,171 @@ function Dashboard() {
           return events;
         }).sort((a, b) => new Date(b.time) - new Date(a.time));
 
-        const totalPages = Math.ceil(activities.length / activitiesPerPage);
+        const search = String(activitySearch || "").trim().toLowerCase();
+        const filteredActivities = search
+          ? activities.filter((a) => {
+              const hay = `${a.title || ""} ${a.description || ""}`.toLowerCase();
+              return hay.includes(search);
+            })
+          : activities;
+
+        const totalPages = Math.ceil(filteredActivities.length / activitiesPerPage);
         const startIndex = (currentActivityPage - 1) * activitiesPerPage;
-        const pagedActivities = activities.slice(startIndex, startIndex + activitiesPerPage);
+        const pagedActivities = filteredActivities.slice(startIndex, startIndex + activitiesPerPage);
+
+        const totalRecords = filteredActivities.length;
+        const securityAlerts = filteredActivities.filter((a) => a.type === "security").length;
+        const logVol24h = filteredActivities.filter((a) => {
+          const t = new Date(a.time).getTime();
+          return Number.isFinite(t) && Date.now() - t <= 24 * 60 * 60 * 1000;
+        }).length;
 
         return (
-          <div className="card" style={{ padding: '0', overflow: 'hidden', height: '100%', display: 'flex', flexDirection: 'column', border: '1px solid #eef2f6', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.02)' }}>
-            <div style={{ 
-              padding: '20px 24px', 
-              background: 'linear-gradient(to right, #ffffff, #f8fafc)', 
-              borderBottom: '1px solid #f1f5f9', 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center' 
-            }}>
-               <div>
-                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#1e293b', letterSpacing: '-0.02em' }}>Audit Logs</h3>
-                  <p className="muted" style={{ fontSize: '0.8rem', margin: '2px 0 0 0' }}>Comprehensive system event tracking</p>
-               </div>
-               <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '4px', background: '#f1f5f9', borderRadius: '10px' }}>
-                  <button 
+          <div style={{ background: '#ffffff', padding: 0, height: '100%', width: '100%', margin: '-16px -16px -16px -8px' }}>
+            <div className="card" style={{ padding: '0', overflow: 'hidden', height: '100%', width: '100%', display: 'flex', flexDirection: 'column', border: 'none', borderRadius: 0 }}>
+            <div style={{ padding: '18px 18px 12px', background: '#ffffff', borderBottom: '1px solid #f1f5f9' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px' }}>
+                <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
+                  <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #ec4899 0%, #a855f7 100%)' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 12, background: '#fce7f3', color: '#be185d', display: 'grid', placeItems: 'center' }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+                        <path d="M2 17l10 5 10-5" />
+                        <path d="M2 12l10 5 10-5" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b' }}>Total Records</div>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: '#0f172a' }}>{totalRecords.toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
+                  <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #06b6d4 0%, #3b82f6 100%)' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 12, background: '#e0f2fe', color: '#0369a1', display: 'grid', placeItems: 'center' }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b' }}>Security Alerts</div>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: '#0f172a' }}>{String(securityAlerts).padStart(2, "0")}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
+                  <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #fb923c 0%, #f97316 100%)' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 12, background: '#ffedd5', color: '#9a3412', display: 'grid', placeItems: 'center' }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 19V5" />
+                        <path d="M4 19h16" />
+                        <path d="M8 15v-4" />
+                        <path d="M12 15V7" />
+                        <path d="M16 15v-6" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b' }}>24H Log Vol</div>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: '#0f172a' }}>{logVol24h.toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
+                <div style={{ position: 'relative', flex: 1 }}>
+                  <input
+                    value={activitySearch}
+                    onChange={(e) => {
+                      setActivitySearch(e.target.value);
+                      setCurrentActivityPage(1);
+                    }}
+                    placeholder="Search..."
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px 10px 36px',
+                      borderRadius: '12px',
+                      border: '1px solid #e2e8f0',
+                      background: '#ffffff',
+                      outline: 'none',
+                      fontWeight: 600,
+                      color: '#0f172a'
+                    }}
+                  />
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }}>
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m21 21-4.3-4.3" />
+                  </svg>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await loadData();
+                    setCurrentActivityPage(1);
+                  }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '10px 14px',
+                    borderRadius: '12px',
+                    border: '1px solid #e2e8f0',
+                    background: '#ffffff',
+                    fontWeight: 900,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    fontSize: '12px',
+                    color: '#0f172a',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    <path d="M21 3v6h-6" />
+                  </svg>
+                  Refresh History
+                </button>
+
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '4px', background: '#f1f5f9', borderRadius: '10px' }}>
+                  <button
                     disabled={currentActivityPage === 1}
                     onClick={() => setCurrentActivityPage(p => p - 1)}
-                    className="icon-btn"
-                    style={{ 
-                      width: '32px', height: '32px', borderRadius: '8px', border: 'none', 
-                      background: currentActivityPage === 1 ? 'transparent' : 'white', 
+                    style={{
+                      width: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                      background: currentActivityPage === 1 ? 'transparent' : 'white',
                       color: '#64748b', cursor: currentActivityPage === 1 ? 'not-allowed' : 'pointer',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: currentActivityPage === 1 ? 'none' : '0 1px 3px rgba(0,0,0,0.1)'
+                      boxShadow: currentActivityPage === 1 ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
                     }}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </button>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569', padding: '0 8px' }}>Page {currentActivityPage} of {totalPages || 1}</span>
-                  <button 
+                  <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#475569', padding: '0 8px' }}>Page {currentActivityPage} of {totalPages || 1}</span>
+                  <button
                     disabled={currentActivityPage === totalPages || totalPages === 0}
                     onClick={() => setCurrentActivityPage(p => p + 1)}
-                    className="icon-btn"
-                    style={{ 
-                      width: '32px', height: '32px', borderRadius: '8px', border: 'none', 
-                      background: (currentActivityPage === totalPages || totalPages === 0) ? 'transparent' : 'white', 
+                    style={{
+                      width: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                      background: (currentActivityPage === totalPages || totalPages === 0) ? 'transparent' : 'white',
                       color: '#64748b', cursor: (currentActivityPage === totalPages || totalPages === 0) ? 'not-allowed' : 'pointer',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: (currentActivityPage === totalPages || totalPages === 0) ? 'none' : '0 1px 3px rgba(0,0,0,0.1)'
+                      boxShadow: (currentActivityPage === totalPages || totalPages === 0) ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
                     }}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </button>
-               </div>
+                </div>
+              </div>
             </div>
             
             <div style={{ padding: '24px', flex: 1, position: 'relative' }}>
@@ -699,176 +1305,88 @@ function Dashboard() {
                 ))}
               </div>
             )}
+            </div>
           </div>
         );
       case "products":
-        
-        const toggleProductStatus = async (productName, currentProducts) => {
-          if (!productTabCompany) return;
-          try {
-            setSubmitting(true);
-            const hasProduct = currentProducts.includes(productName);
-            const newProducts = hasProduct 
-              ? currentProducts.filter(p => p !== productName)
-              : [...currentProducts, productName];
-            
-            await api.put(`/companies/${productTabCompany._id}/products`, { products: newProducts });
-            
-            // Update global state and local tab state
-            setCompanies(prev => prev.map(c => 
-              c._id === productTabCompany._id ? { ...c, products: newProducts } : c
-            ));
-            setProductTabCompany(prev => ({ ...prev, products: newProducts }));
-            
-            setMessage(`${productName} ${hasProduct ? 'revoked from' : 'assigned to'} ${productTabCompany.name}`);
-            setTimeout(() => setMessage(""), 3000);
-          } catch (err) {
-            setError("Failed to update module entitlement");
-          } finally {
-            setSubmitting(false);
-          }
-        };
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', animation: 'fadeIn 0.3s ease-out' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em' }}>
+                  Module Entitlements
+                </h2>
+              </div>
+            </div>
 
-        if (!productTabCompany) {
-          return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', animation: 'fadeIn 0.3s ease-out' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                 <div>
-                    <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em' }}>Module Entitlements</h2>
-                    <p className="muted" style={{ fontSize: '0.9rem' }}>Select an organization to manage their product suite</p>
-                 </div>
+            <div className="card" style={{ padding: '0', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1.5fr) minmax(150px, 1fr) 100px', padding: '16px 24px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Organization</div>
+                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Modules Active</div>
+                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>Action</div>
               </div>
 
-              <div className="card" style={{ padding: '0', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1.5fr) minmax(150px, 1fr) 100px', padding: '16px 24px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Organization</div>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Modules Active</div>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>Action</div>
-                </div>
-                <div style={{ maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
-                  {companies.map((company) => (
-                    <div 
-                      key={company._id} 
-                      onClick={() => setProductTabCompany(company)}
-                      style={{ 
-                        display: 'grid', gridTemplateColumns: 'minmax(200px, 1.5fr) minmax(150px, 1fr) 100px', 
-                        padding: '16px 24px', alignItems: 'center', borderBottom: '1px solid #f1f5f9',
-                        cursor: 'pointer', transition: 'background 0.2s', background: '#ffffff'
+              <div style={{ maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
+                {companies.map((company) => {
+                  const visibleProducts = (company.products || []).filter((p) => String(p).toUpperCase() !== "TMS");
+                  return (
+                    <div
+                      key={company._id}
+                      onClick={() => navigate(`/companies/${company._id}/products`)}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(200px, 1.5fr) minmax(150px, 1fr) 100px',
+                        padding: '16px 24px',
+                        alignItems: 'center',
+                        borderBottom: '1px solid #f1f5f9',
+                        cursor: 'pointer',
+                        transition: 'background 0.2s',
+                        background: '#ffffff'
                       }}
-                      onMouseOver={(e) => e.currentTarget.style.background = '#f8fafc'}
-                      onMouseOut={(e) => e.currentTarget.style.background = '#ffffff'}
+                      onMouseOver={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                      onMouseOut={(e) => (e.currentTarget.style.background = '#ffffff')}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                         <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#eff6ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.1rem' }}>
-                           {company.name.charAt(0).toUpperCase()}
-                         </div>
-                         <div style={{ overflow: 'hidden' }}>
-                            <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</div>
-                            <div className="muted" style={{ fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.email}</div>
-                         </div>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#eff6ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.1rem' }}>
+                          {company.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ overflow: 'hidden' }}>
+                          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {company.name}
+                          </div>
+                          <div className="muted" style={{ fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {company.email}
+                          </div>
+                        </div>
                       </div>
+
                       <div>
-                        {company.products && company.products.length > 0 ? (
-                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                             {company.products.map(p => (
-                               <span key={p} style={{ fontSize: '0.7rem', padding: '4px 10px', background: '#f0fdf4', color: '#166534', borderRadius: '6px', fontWeight: 700 }}>{p}</span>
-                             ))}
-                           </div>
+                        {visibleProducts.length > 0 ? (
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {visibleProducts.map((p) => (
+                              <span key={p} style={{ fontSize: '0.7rem', padding: '4px 10px', background: '#f0fdf4', color: '#166534', borderRadius: '6px', fontWeight: 700 }}>
+                                {p}
+                              </span>
+                            ))}
+                          </div>
                         ) : (
                           <span className="muted" style={{ fontSize: '0.8rem', fontStyle: 'italic' }}>None Provisioned</span>
                         )}
                       </div>
+
                       <div style={{ textAlign: 'right' }}>
-                        <button style={{ background: '#eff6ff', color: '#2563eb', padding: '6px 14px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, border: 'none', cursor: 'pointer' }}>
+                        <Link
+                          to={`/companies/${company._id}/products`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ background: '#eff6ff', color: '#2563eb', padding: '6px 14px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'inline-block' }}
+                        >
                           Manage
-                        </button>
+                        </Link>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
-            </div>
-          );
-        }
-
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', animation: 'fadeInRight 0.3s ease-out' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-               <button 
-                onClick={() => setProductTabCompany(null)}
-                style={{ 
-                  background: '#ffffff', color: '#0f172a', width: '44px', height: '44px', borderRadius: '12px', 
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #e2e8f0', cursor: 'pointer',
-                  boxShadow: '0 1px 2px rgba(15, 23, 42, 0.05)'
-                }}
-               >
-                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                   <path d="M19 12H5M12 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
-                 </svg>
-               </button>
-               <div>
-                  <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>{productTabCompany.name}</h2>
-                  <p className="muted" style={{ fontSize: '0.85rem', margin: 0 }}>Managing product suite assignments</p>
-               </div>
-            </div>
-
-            <div className="card" style={{ padding: '0', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
-               <div style={{ padding: '24px 32px', borderBottom: '1px solid #f1f5f9', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>Product Suite</h3>
-                    <p className="muted" style={{ fontSize: '0.85rem', margin: '4px 0 0 0' }}>Toggle individual modules on or off</p>
-                  </div>
-                  <div style={{ padding: '8px 16px', background: '#eff6ff', color: '#2563eb', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 800 }}>
-                    {productTabCompany.products?.length || 0} / {products.length} Active Modules
-                  </div>
-               </div>
-               
-               <div style={{ padding: '32px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-                  {products.map(p => {
-                    const isActive = (productTabCompany.products || []).includes(p.name);
-                    return (
-                      <div 
-                        key={p._id}
-                        style={{ 
-                          padding: '20px', borderRadius: '16px', border: isActive ? '2px solid #2563eb' : '1px solid #e2e8f0',
-                          background: isActive ? '#f8fafc' : '#ffffff',
-                          display: 'flex', flexDirection: 'column', gap: '16px', position: 'relative'
-                        }}
-                      >
-                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                               <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: isActive ? '#eff6ff' : '#f1f5f9', color: isActive ? '#2563eb' : '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                    <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                               </div>
-                               <div>
-                                  <h4 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>{p.name}</h4>
-                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: isActive ? '#059669' : '#94a3b8' }}>
-                                    {isActive ? 'ACTIVE MODULE' : 'DISABLED'}
-                                  </span>
-                               </div>
-                            </div>
-                         </div>
-                         
-                         <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
-                            <button
-                              disabled={submitting}
-                              onClick={() => toggleProductStatus(p.name, productTabCompany.products || [])}
-                              style={{ 
-                                padding: '8px 16px', borderRadius: '10px', fontSize: '0.85rem', fontWeight: 800, border: 'none', cursor: 'pointer',
-                                background: isActive ? '#fee2e2' : '#2563eb',
-                                color: isActive ? '#ef4444' : '#ffffff',
-                                transition: 'all 0.2s', width: '100%'
-                              }}
-                            >
-                              {isActive ? 'Revoke Access' : 'Provision Module'}
-                            </button>
-                         </div>
-                      </div>
-                    );
-                  })}
-               </div>
             </div>
           </div>
         );
@@ -881,87 +1399,822 @@ function Dashboard() {
     <AdminLayout activeTab={activeTab} setActiveTab={setActiveTab}>
       {renderTabContent()}
 
-      {/* Create Company Modal stays global */}
-      {showCreateModal && (
-        <div style={{ 
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', 
-          zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' 
-        }} onClick={() => setShowCreateModal(false)}>
-            <div style={{ 
-              background: 'white', padding: '32px', borderRadius: '24px', width: '90%', maxWidth: '600px',
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.2)', animation: 'fadeInScale 0.3s ease-out',
-              maxHeight: '90vh', overflowY: 'auto'
-            }} onClick={e => e.stopPropagation()}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b' }}>Register New Company</h2>
-                <button onClick={() => setShowCreateModal(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '36px', height: '36px', cursor: 'pointer', fontSize: '1.1rem' }}>✕</button>
+      {showEditModal &&
+        renderInBody(
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 88,
+              background: "rgba(0,0,0,0.4)",
+              zIndex: 40,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backdropFilter: "blur(4px)",
+              padding: 20
+            }}
+            onClick={() => setShowEditModal(false)}
+          >
+            <div
+              style={{
+                background: "white",
+                width: "100%",
+                height: "100%",
+                borderRadius: "0px",
+                border: "1px solid #e2e8f0",
+                boxShadow: "0 25px 50px -12px rgba(0,0,0,0.2)",
+                overflow: "hidden"
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  padding: "20px",
+                  borderBottom: "1px solid #f1f5f9",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between"
+                }}
+              >
+                <div style={{ fontSize: "1.35rem", fontWeight: 900, color: "#0f172a" }}>Edit Company</div>
               </div>
 
-              <form onSubmit={async (e) => { e.preventDefault(); await submitCompany(e); setShowCreateModal(false); }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div className="form-group">
-                    <label style={{ fontWeight: 700, color: '#475569', fontSize: '0.85rem' }}>Company Name</label>
-                    <input name="name" value={form.name} onChange={updateField} required style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0' }} placeholder="e.g. Acme Corp" />
-                  </div>
-                  <div className="form-group">
-                    <label style={{ fontWeight: 700, color: '#475569', fontSize: '0.85rem' }}>Contact Email</label>
-                    <input type="email" name="email" value={form.email} onChange={updateField} required style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0' }} placeholder="contact@acme.com" />
-                  </div>
-                </div>
+              <form autoComplete="off" onSubmit={saveCompanyEdits}>
+                {/* Prevent browser autofill from injecting saved credentials */}
+                <input
+                  type="text"
+                  name="gtone_edit_fake_username"
+                  autoComplete="username"
+                  tabIndex={-1}
+                  style={{ position: "absolute", opacity: 0, height: 0, width: 0, pointerEvents: "none" }}
+                />
+                <input
+                  type="password"
+                  name="gtone_edit_fake_password"
+                  autoComplete="current-password"
+                  tabIndex={-1}
+                  style={{ position: "absolute", opacity: 0, height: 0, width: 0, pointerEvents: "none" }}
+                />
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px' }}>
-                  <div className="form-group">
-                    <label style={{ fontWeight: 700, color: '#475569', fontSize: '0.85rem' }}>Admin Name</label>
-                    <input name="adminName" value={form.adminName} onChange={updateField} required style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0' }} />
-                  </div>
-                  <div className="form-group">
-                    <label style={{ fontWeight: 700, color: '#475569', fontSize: '0.85rem' }}>Admin Email</label>
-                    <input type="email" name="adminEmail" value={form.adminEmail} onChange={updateField} required style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0' }} />
-                  </div>
-                </div>
-
-                <div className="form-group" style={{ marginTop: '16px' }}>
-                  <label style={{ fontWeight: 700, color: '#475569', fontSize: '0.85rem' }}>Master Password</label>
-                  <input type="password" name="adminPassword" value={form.adminPassword} onChange={updateField} required style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0' }} placeholder="••••••••" />
-                </div>
-
-                <div style={{ marginTop: '20px' }}>
-                  <label style={{ fontWeight: 700, color: '#475569', fontSize: '0.85rem', display: 'block', marginBottom: '8px' }}>Assign Initial Modules</label>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {productNames.map((productName) => (
-                      <label key={productName} style={{ 
-                        padding: '8px 16px', cursor: 'pointer', borderRadius: '10px', border: '1px solid',
-                        borderColor: form.products.includes(productName) ? '#2563eb' : '#e2e8f0',
-                        background: form.products.includes(productName) ? '#eff6ff' : 'white',
-                        color: form.products.includes(productName) ? '#1d4ed8' : '#64748b',
-                        fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s'
-                      }}>
+                <div style={{ padding: "20px" }}>
+                  {/* Logo left + 6 inputs on right (2 rows x 3) */}
+                  <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "18px", alignItems: "start" }}>
+                    <div style={{ display: "flex", alignItems: "flex-start" }}>
+                      <label
+                        style={{
+                          width: "120px",
+                          height: "120px",
+                          borderRadius: "22px",
+                          border: "1.5px dashed #cbd5e1",
+                          background: "#f8fafc",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: "pointer",
+                          position: "relative",
+                          overflow: "hidden"
+                        }}
+                      >
                         <input
-                          type="checkbox"
-                          checked={form.products.includes(productName)}
-                          onChange={() => toggleProduct(productName)}
-                          style={{ display: 'none' }}
+                          type="file"
+                          accept="image/*"
+                          style={{ display: "none" }}
+                          onChange={(ev) => {
+                            const file = ev.target.files?.[0];
+                            if (!file) return;
+                            const url = URL.createObjectURL(file);
+                            setEditCompanyLogoPreview(url);
+                          }}
                         />
-                        {productName}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+                        {editCompanyLogoPreview ? (
+                          <img src={editCompanyLogoPreview} alt="Company logo preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <div style={{ textAlign: "center" }}>
+                            <div
+                              style={{
+                                width: 40,
+                                height: 40,
+                                borderRadius: 14,
+                                background: "#eef2ff",
+                                color: "#4f46e5",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                margin: "0 auto 10px"
+                              }}
+                            >
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="20" height="20">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4-4a3 5 0 0 1 4 0l4 4" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2 20h20" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 10a4 4 0 0 1 10 0" />
+                              </svg>
+                            </div>
+                            <div style={{ fontSize: "0.75rem", fontWeight: 800, color: "#64748b" }}>UPLOAD LOGO</div>
+                          </div>
+                        )}
 
-                <button 
-                  type="submit" 
-                  disabled={submitting} 
-                  style={{ 
-                    marginTop: '24px', width: '100%', background: '#2563eb', color: 'white', 
-                    padding: '14px', borderRadius: '12px', fontWeight: 700, border: 'none', cursor: 'pointer' 
-                  }}
-                >
-                  {submitting ? "Processing..." : "Finish & Create Company"}
-                </button>
+                        <div
+                          style={{
+                            position: "absolute",
+                            right: 12,
+                            bottom: 12,
+                            width: 34,
+                            height: 34,
+                            borderRadius: 14,
+                            background: "#4f46e5",
+                            color: "white",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            boxShadow: "0 10px 20px rgba(79, 70, 229, 0.25)"
+                          }}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 20h9" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                          </svg>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "14px" }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                          COMPANY NAME
+                        </label>
+                        <input
+                          value={editForm.name}
+                          onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))}
+                          required
+                          placeholder="Company name"
+                          autoComplete="off"
+                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                          ADMIN NAME
+                        </label>
+                        <input
+                          value={editForm.adminName}
+                          onChange={(e) => setEditForm((p) => ({ ...p, adminName: e.target.value }))}
+                          required
+                          placeholder="Admin full name"
+                          autoComplete="off"
+                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                          COMPANY EMAIL
+                        </label>
+                        <input
+                          type="email"
+                          value={editForm.email}
+                          onChange={(e) => setEditForm((p) => ({ ...p, email: e.target.value }))}
+                          required
+                          placeholder="company@example.com"
+                          autoComplete="off"
+                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                          PASSWORD
+                        </label>
+                        <input
+                          type="password"
+                          value={editForm.adminPassword}
+                          onChange={(e) => setEditForm((p) => ({ ...p, adminPassword: e.target.value }))}
+                          placeholder="Leave blank to keep same"
+                          autoComplete="new-password"
+                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                          PHONE NUMBER
+                        </label>
+                        <input
+                          value={editForm.phone}
+                          onChange={(e) => setEditForm((p) => ({ ...p, phone: e.target.value }))}
+                          placeholder="+91 98765 43210"
+                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                          SUB COMPANY LIMIT
+                        </label>
+                        <input
+                          value={editForm.subCompanyLimit}
+                          onChange={(e) => setEditForm((p) => ({ ...p, subCompanyLimit: e.target.value }))}
+                          placeholder="10"
+                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: "14px",
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                      gap: "14px"
+                    }}
+                  >
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                        COMPANY TYPE
+                      </label>
+                      <select
+                        value={editForm.companyType}
+                        onChange={(e) => setEditForm((p) => ({ ...p, companyType: e.target.value }))}
+                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                      >
+                        <option value="">Select Type</option>
+                        <option value="PRIVATE">Private</option>
+                        <option value="PUBLIC">Public</option>
+                        <option value="PARTNERSHIP">Partnership</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                        GST NUMBER
+                      </label>
+                      <input
+                        value={editForm.gstNumber}
+                        onChange={(e) => setEditForm((p) => ({ ...p, gstNumber: e.target.value }))}
+                        placeholder="GSTIN (optional)"
+                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                        PAN NUMBER
+                      </label>
+                      <input
+                        value={editForm.panNumber}
+                        onChange={(e) => setEditForm((p) => ({ ...p, panNumber: e.target.value }))}
+                        placeholder="PAN (optional)"
+                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                        REGISTRATION NO
+                      </label>
+                      <input
+                        value={editForm.registrationNo}
+                        onChange={(e) => setEditForm((p) => ({ ...p, registrationNo: e.target.value }))}
+                        placeholder="Registration no. (optional)"
+                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                        COUNTRY
+                      </label>
+                      <input
+                        value={editForm.country}
+                        onChange={(e) => setEditForm((p) => ({ ...p, country: e.target.value }))}
+                        placeholder="Country (optional)"
+                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                        STATE
+                      </label>
+                      <input
+                        value={editForm.state}
+                        onChange={(e) => setEditForm((p) => ({ ...p, state: e.target.value }))}
+                        placeholder="State (optional)"
+                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: "14px" }}>
+                    <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                      OFFICE ADDRESS
+                    </label>
+                    <input
+                      value={editForm.officeAddress}
+                      onChange={(e) => setEditForm((p) => ({ ...p, officeAddress: e.target.value }))}
+                      placeholder="Office address (optional)"
+                      style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                    />
+                  </div>
+
+                  <div style={{ marginTop: "10px" }}>
+                    <div style={{ fontSize: "0.78rem", fontWeight: 900, color: "#475569", marginBottom: "10px" }}>
+                      Product Select
+                    </div>
+                    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                      {["CRM", "HRMS", "PMS"].map((productName) => (
+                        <label
+                          key={productName}
+                          style={{
+                            padding: "10px 18px",
+                            cursor: "pointer",
+                            borderRadius: "14px",
+                            border: "1px solid",
+                            borderColor: (editForm.products || []).includes(productName) ? "#2563eb" : "#e2e8f0",
+                            background: (editForm.products || []).includes(productName) ? "#eff6ff" : "#ffffff",
+                            color: (editForm.products || []).includes(productName) ? "#1d4ed8" : "#64748b",
+                            fontSize: "0.9rem",
+                            fontWeight: 700,
+                            transition: "all 0.2s ease"
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={(editForm.products || []).includes(productName)}
+                            onChange={() =>
+                              setEditForm((p) => ({
+                                ...p,
+                                products: (p.products || []).includes(productName)
+                                  ? (p.products || []).filter((v) => v !== productName)
+                                  : [...(p.products || []), productName]
+                              }))
+                            }
+                            style={{ display: "none" }}
+                          />
+                          {productName}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: "22px", display: "flex", justifyContent: "flex-end", gap: "14px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowEditModal(false)}
+                    style={{
+                      background: "#ffffff",
+                      color: "#64748b",
+                      padding: "12px 18px",
+                      borderRadius: "14px",
+                      fontWeight: 900,
+                      letterSpacing: "0.02em",
+                      border: "1px solid #e2e8f0",
+                      cursor: "pointer",
+                      minWidth: "140px"
+                    }}
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    style={{
+                      background: "#2563eb",
+                      color: "white",
+                      padding: "12px 20px",
+                      borderRadius: "14px",
+                      fontWeight: 900,
+                      letterSpacing: "0.02em",
+                      border: "none",
+                      cursor: "pointer",
+                      minWidth: "220px",
+                      boxShadow: "0 14px 28px rgba(37, 99, 235, 0.22)",
+                      opacity: submitting ? 0.85 : 1
+                    }}
+                  >
+                    {submitting ? "SAVING..." : "SAVE CHANGES"}
+                  </button>
+                </div>
+                </div>
               </form>
             </div>
-        </div>
-      )}
+          </div>
+        )}
+
+      {/* Create Company Modal stays global */}
+      {showCreateModal &&
+        renderInBody(
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 88,
+              background: "rgba(15, 23, 42, 0.45)",
+              zIndex: 40,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backdropFilter: "blur(6px)",
+              padding: 20
+            }}
+            onClick={() => setShowCreateModal(false)}
+          >
+            <div
+              style={{
+                background: "#ffffff",
+                width: "100%",
+                height: "100%",
+                borderRadius: "0px",
+                border: "1px solid #e2e8f0",
+                boxShadow: "0 40px 80px rgba(15, 23, 42, 0.18)",
+                overflow: "hidden"
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+            <div
+              style={{
+                padding: '20px',
+                borderBottom: '1px solid #f1f5f9',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '1.35rem', fontWeight: 900, color: '#0f172a' }}>
+                  New Company Create
+                </div>
+              </div>
+            </div>
+
+            <form
+              autoComplete="off"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                await submitCompany(e);
+                setShowCreateModal(false);
+              }}
+            >
+              {/* Prevent browser autofill from injecting saved credentials */}
+              <input
+                type="text"
+                name="gtone_fake_username"
+                autoComplete="username"
+                tabIndex={-1}
+                style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }}
+              />
+              <input
+                type="password"
+                name="gtone_fake_password"
+                autoComplete="current-password"
+                tabIndex={-1}
+                style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }}
+              />
+              <div style={{ padding: '20px' }}>
+                {/* Logo left + 6 inputs on right (2 rows x 3) */}
+                <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '18px', alignItems: 'start' }}>
+                  {/* Logo Upload */}
+                  <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                    <label
+                      style={{
+                        width: '120px',
+                        height: '120px',
+                        borderRadius: '22px',
+                        border: '1.5px dashed #cbd5e1',
+                        background: '#f8fafc',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        position: 'relative',
+                        overflow: 'hidden'
+                      }}
+                    >
+                      <input
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={(ev) => {
+                          const file = ev.target.files?.[0];
+                          if (!file) return;
+                          const url = URL.createObjectURL(file);
+                          setCompanyLogoPreview(url);
+                        }}
+                      />
+                      {companyLogoPreview ? (
+                        <img src={companyLogoPreview} alt="Company logo preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ width: 40, height: 40, borderRadius: 14, background: '#eef2ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="20" height="20">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4-4a3 5 0 0 1 4 0l4 4" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2 20h20" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 10a4 4 0 0 1 10 0" />
+                            </svg>
+                          </div>
+                          <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b' }}>UPLOAD LOGO</div>
+                        </div>
+                      )}
+
+                      <div
+                        style={{
+                          position: 'absolute',
+                          right: 12,
+                          bottom: 12,
+                          width: 34,
+                          height: 34,
+                          borderRadius: 14,
+                          background: '#4f46e5',
+                          color: 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 10px 20px rgba(79, 70, 229, 0.25)'
+                        }}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 20h9" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                        </svg>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '14px' }}>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                      COMPANY NAME
+                    </label>
+                    <input
+                      name="name"
+                      value={form.name}
+                      onChange={updateField}
+                      required
+                        placeholder="Company name"
+                      autoComplete="off"
+                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                      ADMIN NAME
+                    </label>
+                    <input
+                      name="adminName"
+                      value={form.adminName}
+                      onChange={updateField}
+                      required
+                        placeholder="Admin full name"
+                      autoComplete="off"
+                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                      COMPANY EMAIL
+                    </label>
+                    <input
+                      type="email"
+                      name="email"
+                      value={form.email}
+                      onChange={updateField}
+                      required
+                        placeholder="company@example.com"
+                      autoComplete="off"
+                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                      PASSWORD
+                    </label>
+                    <input
+                      type="password"
+                      name="adminPassword"
+                      value={form.adminPassword}
+                      onChange={updateField}
+                      required
+                        placeholder="Create a password"
+                      autoComplete="new-password"
+                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                      PHONE NUMBER
+                    </label>
+                    <input
+                      name="phone"
+                      value={form.phone}
+                      onChange={updateField}
+                        placeholder="+91 98765 43210"
+                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                      SUB COMPANY LIMIT
+                    </label>
+                    <input
+                      name="subCompanyLimit"
+                      value={form.subCompanyLimit}
+                      onChange={updateField}
+                        placeholder="10"
+                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                    />
+                  </div>
+                  </div>
+
+                  <div
+                    style={{
+                      gridColumn: '1 / -1',
+                      marginTop: '14px',
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                      gap: '14px'
+                    }}
+                  >
+                  <div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          COMPANY TYPE
+                        </label>
+                        <select
+                          name="companyType"
+                          value={form.companyType}
+                          onChange={updateField}
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        >
+                          <option value="">Select Type</option>
+                          <option value="PRIVATE">Private</option>
+                          <option value="PUBLIC">Public</option>
+                          <option value="PARTNERSHIP">Partnership</option>
+                        </select>
+                      </div>
+                  </div>
+                  <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          GST NUMBER
+                        </label>
+                        <input
+                          name="gstNumber"
+                          value={form.gstNumber}
+                          onChange={updateField}
+                          placeholder="GSTIN (optional)"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+                  <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          PAN NUMBER
+                        </label>
+                        <input
+                          name="panNumber"
+                          value={form.panNumber}
+                          onChange={updateField}
+                          placeholder="PAN (optional)"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+                  <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          REGISTRATION NO
+                        </label>
+                        <input
+                          name="registrationNo"
+                          value={form.registrationNo}
+                          onChange={updateField}
+                          placeholder="Registration no. (optional)"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+                  <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          COUNTRY
+                        </label>
+                        <input
+                          name="country"
+                          value={form.country}
+                          onChange={updateField}
+                          placeholder="Country (optional)"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+                  <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          STATE
+                        </label>
+                        <input
+                          name="state"
+                          value={form.state}
+                          onChange={updateField}
+                          placeholder="State (optional)"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                      <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                        OFFICE ADDRESS
+                      </label>
+                      <input
+                        name="officeAddress"
+                        value={form.officeAddress}
+                        onChange={updateField}
+                        placeholder="Office address (optional)"
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                      />
+                    </div>
+
+                    <div style={{ marginTop: '10px', gridColumn: '1 / -1' }}>
+                      <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#475569', marginBottom: '10px' }}>
+                        Product Select
+                      </div>
+                      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                        {['CRM', 'HRMS', 'PMS'].map((productName) => (
+                          <label
+                            key={productName}
+                            style={{
+                              padding: '10px 18px',
+                              cursor: 'pointer',
+                              borderRadius: '14px',
+                              border: '1px solid',
+                              borderColor: form.products.includes(productName) ? '#2563eb' : '#e2e8f0',
+                              background: form.products.includes(productName) ? '#eff6ff' : '#ffffff',
+                              color: form.products.includes(productName) ? '#1d4ed8' : '#64748b',
+                              fontSize: '0.9rem',
+                              fontWeight: 700,
+                              transition: 'all 0.2s ease'
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={form.products.includes(productName)}
+                              onChange={() => toggleProduct(productName)}
+                              style={{ display: 'none' }}
+                            />
+                            {productName}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                </div>
+
+                <div style={{ marginTop: '22px', display: 'flex', justifyContent: 'flex-end', gap: '14px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateModal(false)}
+                    style={{
+                      background: '#ffffff',
+                      color: '#64748b',
+                      padding: '12px 18px',
+                      borderRadius: '14px',
+                      fontWeight: 900,
+                      letterSpacing: '0.02em',
+                      border: '1px solid #e2e8f0',
+                      cursor: 'pointer',
+                      minWidth: '140px'
+                    }}
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    style={{
+                      background: '#4f46e5',
+                      color: 'white',
+                      padding: '12px 20px',
+                      borderRadius: '14px',
+                      fontWeight: 900,
+                      letterSpacing: '0.02em',
+                      border: 'none',
+                      cursor: 'pointer',
+                      minWidth: '220px',
+                      boxShadow: '0 14px 28px rgba(79, 70, 229, 0.25)',
+                      opacity: submitting ? 0.85 : 1
+                    }}
+                  >
+                    {submitting ? "CREATING..." : "CREATE COMPANY  +"}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+          </div>
+        )}
     </AdminLayout>
   );
 }

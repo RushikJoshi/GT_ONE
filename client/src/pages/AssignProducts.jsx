@@ -1,23 +1,125 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
+import "./AssignProducts.css";
+import AdminLayout from "../components/AdminLayout";
 
 const TOAST_TIMEOUT = 2500;
+
+const iconProps = {
+  width: 22,
+  height: 22,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.75,
+  strokeLinecap: "round",
+  strokeLinejoin: "round"
+};
+
+function ProductRowIcon({ productName }) {
+  const key = String(productName || "").toUpperCase();
+
+  if (key === "CRM") {
+    return (
+      <svg {...iconProps} aria-hidden>
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    );
+  }
+
+  if (key === "HRMS") {
+    return (
+      <svg {...iconProps} aria-hidden>
+        <path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18" />
+        <path d="M6 12h12" />
+        <path d="M6 16h12" />
+        <path d="M10 6h.01" />
+        <path d="M14 6h.01" />
+      </svg>
+    );
+  }
+
+  if (key === "PMS") {
+    return (
+      <svg {...iconProps} aria-hidden>
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <path d="M14 2v6h6" />
+        <path d="M8 13h8" />
+        <path d="M8 17h8" />
+        <path d="M8 9h2" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...iconProps} aria-hidden>
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+    </svg>
+  );
+}
+
+function formatGtProductName(name) {
+  const n = String(name || "").trim();
+  if (!n) return "GT";
+  return `GT ${n}`;
+}
+
+/** Matches server `HRMS_MODULE_KEYS` — used to filter modules per product in the UI. */
+const ALL_HRMS_MODULE_KEYS = [
+  "hr",
+  "attendance",
+  "leave",
+  "payroll",
+  "recruitment",
+  "backgroundVerification",
+  "documentManagement",
+  "employeePortal",
+  "socialMediaIntegration",
+  "reports"
+];
+
+/** Which modules appear when a product is selected (keys must exist in API `moduleKeys`). */
+const MODULE_KEYS_BY_PRODUCT = {
+  CRM: ["recruitment"],
+  HRMS: ALL_HRMS_MODULE_KEYS,
+  PMS: ["documentManagement"]
+};
+
+function getVisibleModuleKeys(selectedProductName, moduleKeysFromApi) {
+  if (!selectedProductName) return [];
+  const upper = String(selectedProductName || "").toUpperCase();
+  const preset = MODULE_KEYS_BY_PRODUCT[upper];
+  const allowed = new Set(moduleKeysFromApi || []);
+  if (!preset) {
+    return (moduleKeysFromApi || []).filter((k) => ALL_HRMS_MODULE_KEYS.includes(k));
+  }
+  return preset.filter((k) => allowed.has(k));
+}
+
+function getProductScopedModuleLabel(selectedProductName, moduleKey, fallbackLabel) {
+  const upper = String(selectedProductName || "").toUpperCase();
+  if (upper === "CRM" && moduleKey === "recruitment") return "CRM";
+  if (upper === "PMS" && moduleKey === "documentManagement") return "PMS";
+  return fallbackLabel;
+}
 
 function AssignProducts() {
   const navigate = useNavigate();
   const { companyId } = useParams();
   const [allProducts, setAllProducts] = useState([]);
   const [moduleKeys, setModuleKeys] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [company, setCompany] = useState(null);
-  const [selectedProducts, setSelectedProducts] = useState([]);
   const [enabledModules, setEnabledModules] = useState({});
-  const [activeTab, setActiveTab] = useState("products");
   const [loading, setLoading] = useState(true);
-  const [savingProducts, setSavingProducts] = useState(false);
   const [savingModules, setSavingModules] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
+  const [selectedProductName, setSelectedProductName] = useState("");
 
   const showToast = (type, message) => {
     setToast({ type, message });
@@ -26,45 +128,72 @@ function AssignProducts() {
     }, TOAST_TIMEOUT);
   };
 
-  useEffect(() => {
-    const loadPage = async () => {
-      try {
-        setLoading(true);
-        const [productsRes, companiesRes, hrmsModulesRes] = await Promise.all([
-          api.get("/products"),
-          api.get("/companies"),
-          api.get(`/super-admin/companies/${companyId}/hrms-modules`)
-        ]);
+  const loadPage = useCallback(async () => {
+    setError("");
+    try {
+      setLoading(true);
+      const [productsRes, companiesRes, hrmsModulesRes] = await Promise.all([
+        api.get("/products"),
+        api.get("/companies"),
+        api.get(`/super-admin/companies/${companyId}/hrms-modules`)
+      ]);
 
-        const targetCompany = (companiesRes.data.companies || []).find(
-          (item) => item._id === companyId
-        );
+      const targetCompany = (companiesRes.data.companies || []).find(
+        (item) => item._id === companyId
+      );
 
-        if (!targetCompany) {
-          setError("Company not found");
-          return;
-        }
-
-        setAllProducts(productsRes.data.products || []);
-        setCompany(targetCompany);
-        setSelectedProducts(targetCompany.products || []);
-        setModuleKeys(hrmsModulesRes.data.moduleKeys || []);
-        setEnabledModules(hrmsModulesRes.data.hrmsEnabledModules || {});
-      } catch (requestError) {
-        setError(requestError?.response?.data?.message || "Failed to load page");
-      } finally {
-        setLoading(false);
+      if (!targetCompany) {
+        setError("Company not found");
+        return;
       }
-    };
 
-    loadPage();
+      setAllProducts(productsRes.data.products || []);
+      setCompanies(companiesRes.data.companies || []);
+      setCompany(targetCompany);
+      setModuleKeys(hrmsModulesRes.data.moduleKeys || []);
+      setEnabledModules(hrmsModulesRes.data.hrmsEnabledModules || {});
+    } catch (requestError) {
+      setError(requestError?.response?.data?.message || "Failed to load page");
+    } finally {
+      setLoading(false);
+    }
   }, [companyId]);
 
-  const toggleProduct = (name) => {
-    setSelectedProducts((prev) =>
-      prev.includes(name) ? prev.filter((item) => item !== name) : [...prev, name]
+  useEffect(() => {
+    loadPage();
+  }, [loadPage]);
+
+  const filteredProducts = useMemo(() => {
+    const products = (allProducts || []).filter(
+      (p) => String(p?.name || "").toUpperCase() !== "TMS"
     );
-  };
+
+    const companyProducts = Array.isArray(company?.products) ? company.products : null;
+    // Only show products that are assigned to the selected company.
+    // If none are assigned, show none (no fallback to all products).
+    if (!companyProducts || companyProducts.length === 0) return [];
+
+    const allowed = new Set(
+      companyProducts.map((n) => String(n || "").trim().toUpperCase()).filter(Boolean)
+    );
+    return products.filter((p) => allowed.has(String(p?.name || "").trim().toUpperCase()));
+  }, [allProducts, company]);
+
+  useEffect(() => {
+    if (!filteredProducts.length) {
+      setSelectedProductName("");
+      return;
+    }
+    setSelectedProductName((prev) => {
+      if (prev && filteredProducts.some((p) => p.name === prev)) return prev;
+      return filteredProducts[0].name;
+    });
+  }, [filteredProducts]);
+
+  const visibleModuleKeys = useMemo(
+    () => getVisibleModuleKeys(selectedProductName, moduleKeys),
+    [selectedProductName, moduleKeys]
+  );
 
   const toggleModule = (key) => {
     setEnabledModules((prev) => ({
@@ -73,29 +202,14 @@ function AssignProducts() {
     }));
   };
 
-  const saveProducts = async () => {
-    setError("");
-
-    try {
-      setSavingProducts(true);
-      await api.put(`/companies/${companyId}/products`, { products: selectedProducts });
-      showToast("success", "Products updated successfully");
-    } catch (requestError) {
-      const message = requestError?.response?.data?.message || "Failed to update products";
-      setError(message);
-      showToast("error", message);
-    } finally {
-      setSavingProducts(false);
-    }
-  };
-
-  const saveModules = async () => {
+  const saveModules = async (overrideEnabledModules) => {
     setError("");
 
     try {
       setSavingModules(true);
+      const payload = overrideEnabledModules || enabledModules;
       const res = await api.put(`/super-admin/companies/${companyId}/hrms-modules`, {
-        hrmsEnabledModules: enabledModules
+        hrmsEnabledModules: payload
       });
       setEnabledModules(res.data.hrmsEnabledModules || {});
       setModuleKeys(res.data.moduleKeys || moduleKeys);
@@ -109,84 +223,348 @@ function AssignProducts() {
     }
   };
 
+  const moduleMeta = {
+    hr: { label: "HR Management", color: "#2563eb", icon: "users" },
+    payroll: { label: "Payroll System", color: "#10b981", icon: "rupee" },
+    attendance: { label: "Attendance", color: "#ef4444", icon: "clock" },
+    leave: { label: "Leave Management", color: "#f59e0b", icon: "calendar" },
+    employeePortal: { label: "Employee Portal", color: "#6366f1", icon: "id" },
+    recruitment: { label: "Recruitment", color: "#8b5cf6", icon: "briefcase" },
+    backgroundVerification: { label: "Verification", color: "#7c3aed", icon: "shield" },
+    documentManagement: { label: "Doc Management", color: "#a855f7", icon: "file" },
+    socialMediaIntegration: { label: "Social Media", color: "#ec4899", icon: "share" },
+    reports: { label: "Reports", color: "#14b8a6", icon: "chart" }
+  };
+
+  const renderIcon = (name, stroke = "currentColor") => {
+    switch (name) {
+      case "users":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        );
+      case "rupee":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 4h12M6 8h12M8 20l8-10H8c0 3.5 2.5 6 6 6" />
+          </svg>
+        );
+      case "clock":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3 2" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          </svg>
+        );
+      case "calendar":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 2v4M16 2v4" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 6h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z" />
+          </svg>
+        );
+      case "id":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16v12H4z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h6" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 14h10" />
+          </svg>
+        );
+      case "briefcase":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6V5a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v1" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h16" />
+          </svg>
+        );
+      case "shield":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+          </svg>
+        );
+      case "file":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M14 2v6h6" />
+          </svg>
+        );
+      case "share":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16 6l-4-4-4 4" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v14" />
+          </svg>
+        );
+      case "chart":
+        return (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 19V5" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 19h16" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 15v-4" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15V7" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16 15v-6" />
+          </svg>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const activeCount = visibleModuleKeys.filter((key) => Boolean(enabledModules[key])).length;
+  const inactiveCount = Math.max(0, visibleModuleKeys.length - activeCount);
+
+  const totalModulesAllCompanies = useMemo(() => {
+    // Total "module records" across:
+    // all companies -> all assigned products -> that product's module set
+    // (CRM=1, PMS=1, HRMS=10 based on MODULE_KEYS_BY_PRODUCT)
+    const list = Array.isArray(companies) ? companies : [];
+    return list.reduce((sum, c) => {
+      const companyProducts = Array.isArray(c?.products) ? c.products : [];
+      const normalizedProducts = companyProducts
+        .map((p) => String(p || "").trim().toUpperCase())
+        .filter(Boolean)
+        .filter((p) => p !== "TMS");
+
+      const companyTotal = normalizedProducts.reduce((n, productName) => {
+        const preset = MODULE_KEYS_BY_PRODUCT[productName];
+        if (Array.isArray(preset)) return n + preset.length;
+        // unknown product => 0 modules in this screen
+        return n;
+      }, 0);
+
+      return sum + companyTotal;
+    }, 0);
+  }, [companies]);
+
+  const toggleAllModules = () => {
+    setEnabledModules((prev) => {
+      const keys = visibleModuleKeys;
+      const allOn = keys.length > 0 && keys.every((key) => Boolean(prev[key]));
+      const nextValue = !allOn;
+      const next = { ...prev };
+      keys.forEach((key) => {
+        next[key] = nextValue;
+      });
+      return next;
+    });
+  };
+
   if (loading) {
     return <div className="center-screen">Loading company configuration...</div>;
   }
 
   return (
-    <div className="page">
-      <header className="topbar">
-        <div>
-          <h1>Company Configuration</h1>
-          <p className="muted">{company?.name} ({company?.email})</p>
-        </div>
-        <div className="inline-actions">
-          <Link className="link-btn" to="/dashboard">
-            Back
-          </Link>
-          <button type="button" onClick={() => navigate("/dashboard")}>Close</button>
-        </div>
-      </header>
+    <AdminLayout activeTab="products" setActiveTab={() => navigate("/dashboard")}>
+      <div className="module-page module-page--flush">
 
-      <div className="tabs">
-        <button
-          type="button"
-          className={activeTab === "products" ? "tab-btn active" : "tab-btn"}
-          onClick={() => setActiveTab("products")}
-        >
-          Products
-        </button>
-        <button
-          type="button"
-          className={activeTab === "hrms" ? "tab-btn active" : "tab-btn"}
-          onClick={() => setActiveTab("hrms")}
-        >
-          HRMS Modules
-        </button>
-      </div>
-
-      {activeTab === "products" && (
-        <div className="card">
-          <h2>Assign Products</h2>
-          <div className="chips">
-            {allProducts.map((product) => (
-              <label key={product._id} className="chip">
-                <input
-                  type="checkbox"
-                  checked={selectedProducts.includes(product.name)}
-                  onChange={() => toggleProduct(product.name)}
-                />
-                {product.name}
-              </label>
-            ))}
+        <div className="config-shell">
+          {/* Top stats */}
+          <div className="config-company-row stats-row">
+            <div className="stat-card stat-card--total">
+              <div className="stat-icon" aria-hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+                  <path d="M2 17l10 5 10-5" />
+                  <path d="M2 12l10 5 10-5" />
+                </svg>
+              </div>
+              <div className="stat-main">
+                <div className="stat-label">Total Modules</div>
+                <div className="stat-value">{totalModulesAllCompanies}</div>
+              </div>
+              <div className="stat-meta" />
+            </div>
+            <div className="stat-card stat-card--active">
+              <div className="stat-icon" aria-hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+              </div>
+              <div className="stat-main">
+                <div className="stat-label">Active Modules</div>
+                <div className="stat-value">{activeCount}</div>
+              </div>
+              <div className="stat-meta" />
+            </div>
+            <div className="stat-card stat-card--inactive">
+              <div className="stat-icon" aria-hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18" />
+                  <path d="M6 6l12 12" />
+                </svg>
+              </div>
+              <div className="stat-main">
+                <div className="stat-label">Inactive Modules</div>
+                <div className="stat-value">{inactiveCount}</div>
+              </div>
+              <div className="stat-meta" />
+            </div>
           </div>
-          <button type="button" onClick={saveProducts} disabled={savingProducts}>
-            {savingProducts ? "Saving..." : "Save Products"}
-          </button>
-        </div>
-      )}
 
-      {activeTab === "hrms" && (
-        <div className="card">
-          <h2>HRMS Product Module Configuration</h2>
-          <p className="muted">Toggle modules enabled for this company in HRMS.</p>
-          <div className="module-grid">
-            {moduleKeys.map((key) => (
-              <label key={key} className="module-item">
-                <span>{key}</span>
-                <input
-                  type="checkbox"
-                  checked={Boolean(enabledModules[key])}
-                  onChange={() => toggleModule(key)}
-                />
-              </label>
-            ))}
+          {/* Full-width company selector row */}
+          <div className="config-company-row company-row">
+            <div className="selected-company">
+              <div className="selected-company-left">
+                <div style={{ minWidth: 0, width: "100%" }}>
+                  <select
+                    className="company-select"
+                    value={companyId || ""}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      if (!nextId) return;
+                      navigate(`/companies/${nextId}/products`);
+                    }}
+                  >
+                    {(companies || []).map((c) => (
+                      <option key={c._id} value={c._id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="company-actions">
+                <button
+                  type="button"
+                  className="company-action company-action--secondary"
+                  onClick={loadPage}
+                  disabled={loading}
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    <path d="M21 3v6h-6" />
+                  </svg>
+                  Refresh
+                </button>
+              </div>
+            </div>
           </div>
-          <button type="button" onClick={saveModules} disabled={savingModules}>
-            {savingModules ? "Saving..." : "Save HRMS Modules"}
-          </button>
+
+          {/* Left: Products */}
+          <div className="config-left">
+            <div className="module-card" style={{ overflow: "hidden" }}>
+              <div style={{ padding: "14px 16px", borderBottom: "1px solid #e2e8f0", fontWeight: 900, color: "#0f172a" }}>
+                Products
+              </div>
+              <div style={{ padding: 14, display: "grid", gap: 10 }}>
+                {filteredProducts.map((product) => {
+                  const isSelected = product.name === selectedProductName;
+                  return (
+                    <button
+                      key={product._id}
+                      type="button"
+                      className={`product-option product-option--selectable${isSelected ? " product-option--selected" : ""}`}
+                      onClick={() => setSelectedProductName(product.name)}
+                    >
+                      <span className="product-option-icon-wrap" aria-hidden>
+                        <ProductRowIcon productName={product.name} />
+                      </span>
+                      <span className="product-option-label">{formatGtProductName(product.name)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Right: HRMS Modules */}
+          <div className="config-right">
+            <div className="module-card module-card-pad">
+              <div className="modules-head">
+                <div className="modules-kpi">
+                  <span style={{ opacity: 0.9 }}>
+                    {activeCount} Modules
+                    {selectedProductName ? (
+                      <span className="modules-kpi-product"> · {formatGtProductName(selectedProductName)}</span>
+                    ) : null}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={toggleAllModules}
+                  disabled={savingModules || visibleModuleKeys.length === 0}
+                >
+                  Enable All
+                </button>
+              </div>
+
+              <div className="modules-grid">
+                {visibleModuleKeys.length === 0 ? (
+                  <p className="modules-empty">
+                    {filteredProducts.length === 0 ? "No products assigned to this company." : "No modules for this product."}
+                  </p>
+                ) : null}
+                {visibleModuleKeys.map((key) => {
+                  const meta = moduleMeta[key] || { label: String(key), color: "#2563eb", icon: "file" };
+                  const isOn = Boolean(enabledModules[key]);
+                  const moduleLabel = getProductScopedModuleLabel(selectedProductName, key, meta.label);
+                  return (
+                    <div
+                      key={key}
+                      className="module-tile"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleModule(key)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleModule(key);
+                        }
+                      }}
+                    >
+                      <div className="module-left">
+                        <div style={{ minWidth: 0 }}>
+                          <div className="module-name">{moduleLabel}</div>
+                          <div className={`module-status ${isOn ? "active" : "inactive"}`}>{isOn ? "Active" : "Inactive"}</div>
+                        </div>
+                      </div>
+                      <input
+                        className="module-switch"
+                        type="checkbox"
+                        checked={isOn}
+                        onChange={() => toggleModule(key)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Toggle ${moduleLabel}`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ paddingTop: 14, display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="modules-save-btn"
+                  onClick={() => saveModules()}
+                  disabled={savingModules}
+                >
+                  {savingModules ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-      )}
 
       {error && <p className="error">{error}</p>}
       {toast && (
@@ -194,7 +572,8 @@ function AssignProducts() {
           {toast.message}
         </div>
       )}
-    </div>
+      </div>
+    </AdminLayout>
   );
 }
 

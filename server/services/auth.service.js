@@ -625,7 +625,7 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
     ? products.map((item) => String(item || "").toUpperCase())
     : [];
   const hasHrmsAccess = normalizedProducts.includes("HRMS");
-  const hasTms = normalizedProducts.some((item) => ["TMS", "PMS", "CRM"].includes(item));
+  const hasTmsFamily = normalizedProducts.some((item) => ["TMS", "PMS", "CRM"].includes(item));
 
   if (isValidAbsoluteUrl(explicitRedirect)) {
     const hrmsValidation = validateRedirectUriForApp({ app: "hrms", redirectUri: explicitRedirect });
@@ -644,7 +644,19 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
 
     const tmsValidation = validateRedirectUriForApp({ app: "tms", redirectUri: explicitRedirect });
     if (tmsValidation.valid) {
-      return hasTms ? explicitRedirect : null;
+      // For TMS-family explicit redirects, require the target product to be explicitly specified
+      // (prevents CRM/PMS access when only one is assigned).
+      try {
+        const u = new URL(explicitRedirect);
+        const requestedProductRaw = u.searchParams.get("product") || u.searchParams.get("app") || "";
+        const requestedProduct = String(requestedProductRaw || "").trim().toUpperCase();
+        if (!requestedProduct || !["CRM", "PMS", "TMS"].includes(requestedProduct)) {
+          return null;
+        }
+        return normalizedProducts.includes(requestedProduct) ? explicitRedirect : null;
+      } catch {
+        return null;
+      }
     }
   }
 
@@ -683,6 +695,18 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
     }
 
     if (!hasHrmsAccess) {
+      // Premium UX: if HRMS isn't enabled but another product is, send user to that product.
+      if (hasTmsFamily) {
+        if (normalizedProducts.includes("CRM") && PRODUCT_URLS.CRM) {
+          return buildAppUrlLikeOrigin(PRODUCT_URLS.CRM, requestOrigin);
+        }
+        if (normalizedProducts.includes("PMS") && PRODUCT_URLS.PMS) {
+          return buildAppUrlLikeOrigin(PRODUCT_URLS.PMS, requestOrigin);
+        }
+        if (normalizedProducts.includes("TMS") && PRODUCT_URLS.TMS) {
+          return buildAppUrlLikeOrigin(PRODUCT_URLS.TMS, requestOrigin);
+        }
+      }
       logAuth("missing_hrms_product", {
         userId: String(user._id),
         email: user.email,
@@ -700,7 +724,7 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
     return redirectUrl;
   }
 
-  if (requestedRedirect === "TMS" && hasTms && PRODUCT_URLS.TMS) {
+  if (requestedRedirect === "TMS" && hasTmsFamily && PRODUCT_URLS.TMS) {
     return buildAppUrlLikeOrigin(PRODUCT_URLS.TMS, requestOrigin);
   }
 
@@ -885,13 +909,26 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
     const explicitRedirect = String(redirect || "").trim();
     if (isValidAbsoluteUrl(explicitRedirect)) {
       if (validateRedirectUriForApp({ app: "tms", redirectUri: explicitRedirect }).valid) {
+        // Keep TMS app context for CRM/PMS as well (same tenant mapping),
+        // but enforce explicit product targeting via resolveLoginRedirect.
         return "TMS";
       }
       if (validateRedirectUriForApp({ app: "hrms", redirectUri: explicitRedirect }).valid) {
         return "HRMS";
       }
     }
-    return normalizeAppName(redirect || "hrms")?.toUpperCase() || "HRMS";
+    const normalized = normalizeAppName(redirect || "hrms")?.toUpperCase() || "HRMS";
+    // If no explicit redirect provided and HRMS isn't enabled, prefer TMS-family apps.
+    if (!redirect && normalized === "HRMS") {
+      const hasHrms = normalizedProducts.includes("HRMS");
+      const hasTmsFamily = normalizedProducts.some((item) => ["TMS", "PMS", "CRM"].includes(item));
+      if (!hasHrms && hasTmsFamily) {
+        if (normalizedProducts.includes("CRM")) return "CRM";
+        if (normalizedProducts.includes("PMS")) return "PMS";
+        return "TMS";
+      }
+    }
+    return normalized;
   })();
   let tenantId, companyId, normalizedCompanyCode;
 

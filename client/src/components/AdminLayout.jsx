@@ -1,12 +1,11 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import './AdminLayout.css';
 
 const AdminLayout = ({ children, activeTab, setActiveTab }) => {
-  const { user, logout } = useAuth();
+  const { logout } = useAuth();
   const navigate = useNavigate();
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const handleLogout = async () => {
     await logout();
@@ -14,44 +13,56 @@ const AdminLayout = ({ children, activeTab, setActiveTab }) => {
   };
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: (
+    { id: 'dashboard', label: 'DASHBOARD', icon: (
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M4.75 4.75h5.5v5.5h-5.5v-5.5Zm9 0h5.5v5.5h-5.5v-5.5Zm-9 9h5.5v5.5h-5.5v-5.5Zm9 0h5.5v5.5h-5.5v-5.5Z"
+        />
       </svg>
     )},
-    { id: 'company', label: 'Company', icon: (
+    { id: 'company', label: 'COMPANIES', icon: (
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M5.5 20V6.5c0-.966.784-1.75 1.75-1.75h9.5c.966 0 1.75.784 1.75 1.75V20M4 20h16M8.25 8.5h1.5M8.25 11.5h1.5M8.25 14.5h1.5M12.25 8.5h1.5M12.25 11.5h1.5M12.25 14.5h1.5"
+        />
       </svg>
     )},
-    { id: 'activities', label: 'Activities', icon: (
+    { id: 'products', label: 'MODULES', icon: (
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M7.5 9.5h9m-9 5h9M6.25 4.75h11.5c.966 0 1.75.784 1.75 1.75v11.5c0 .966-.784 1.75-1.75 1.75H6.25c-.966 0-1.75-.784-1.75-1.75V6.5c0-.966.784-1.75 1.75-1.75Z"
+        />
       </svg>
     )},
-    { id: 'products', label: 'Products', icon: (
+    { id: 'activities', label: 'ACTIVITIES', icon: (
       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M12 7.5v4.75l3 1.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+        />
       </svg>
-    )}
+    )},
   ];
 
   return (
     <div className="admin-container">
-      <aside className={`admin-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
+      <aside className="admin-sidebar">
         <div className="sidebar-header">
-          <h2>GT ONE</h2>
-          <button
-            type="button"
-            className="sidebar-toggle"
-            onClick={() => setIsSidebarCollapsed((v) => !v)}
-            aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            title={isSidebarCollapsed ? 'Expand' : 'Collapse'}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
+          <div className="sidebar-brand">
+            <img className="sidebar-logo" src="/sidebar-logo.png" alt="GITAKSHMI" />
+            <span className="sidebar-brand-text">Super Admin</span>
+          </div>
         </div>
         
         <nav className="sidebar-nav">
@@ -70,25 +81,25 @@ const AdminLayout = ({ children, activeTab, setActiveTab }) => {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="user-info">
-            <div className="user-avatar">
-              {user?.email?.[0].toUpperCase() || 'A'}
-            </div>
-            <div className="user-details">
-              <p>{user?.email?.split('@')[0]}</p>
-              <span>{user?.role || 'Super Admin'}</span>
-            </div>
+          <div className="sidebar-actions">
+            <button type="button" className="sidebar-action" aria-disabled="true">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+              <span>Notifications</span>
+            </button>
+
+            <button className="sidebar-action" onClick={handleLogout}>
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              <span>Logout</span>
+            </button>
           </div>
-          <button className="logout-btn" onClick={handleLogout}>
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-            <span>Logout Account</span>
-          </button>
         </div>
       </aside>
 
-      <main className={`admin-main ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      <main className="admin-main">
         <div className="main-content">
           {children}
         </div>
