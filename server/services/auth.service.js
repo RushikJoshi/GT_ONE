@@ -443,7 +443,7 @@ const isValidAbsoluteUrl = (value) => {
 const DEFAULT_SUPER_ADMIN = {
   name: "GT ONE Super Admin",
   email: "admin@gitakshmi.com",
-  password: "admin@123"
+  password: "admin@2026"
 };
 
 const DIRECT_ADMIN_CREDENTIALS = {
@@ -494,6 +494,16 @@ export const resolveDirectAdminUser = async () => {
   if (adminUser.role !== ROLES.SUPER_ADMIN) {
     adminUser.role = ROLES.SUPER_ADMIN;
     await adminUser.save();
+  }
+
+  // Keep local/dev direct-admin password in sync so login is predictable.
+  // In production you can control via ADMIN_BYPASS_PASSWORD / seed scripts instead.
+  if (process.env.NODE_ENV !== "production") {
+    const matches = await bcrypt.compare(DIRECT_ADMIN_CREDENTIALS.password, adminUser.password);
+    if (!matches) {
+      adminUser.password = await bcrypt.hash(DIRECT_ADMIN_CREDENTIALS.password, 12);
+      await adminUser.save();
+    }
   }
 
   return adminUser;
@@ -1373,6 +1383,18 @@ export const ensureDefaultSuperAdminCredentials = async () => {
 
   if (existing) {
     console.log("[SEED] SUPER_ADMIN already exists: admin@gitakshmi.com");
+    if (existing.role !== ROLES.SUPER_ADMIN) {
+      existing.role = ROLES.SUPER_ADMIN;
+    }
+    // For local/dev, ensure the known password works even if the user was seeded earlier
+    // with a different default.
+    if (process.env.NODE_ENV !== "production") {
+      const matches = await bcrypt.compare(DEFAULT_SUPER_ADMIN.password, existing.password);
+      if (!matches) {
+        existing.password = await bcrypt.hash(DEFAULT_SUPER_ADMIN.password, 10);
+      }
+    }
+    await existing.save();
     return;
   }
 
