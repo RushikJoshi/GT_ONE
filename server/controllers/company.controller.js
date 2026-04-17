@@ -10,6 +10,7 @@ import {
   updateCompanyHrmsModulesById
 } from "../services/company.service.js";
 import { syncCompanyToHrms } from "../services/hrmsProvisioning.service.js";
+import { HRMS_MODULE_KEYS, normalizeHrmsModuleSettings } from "../constants/hrmsModules.js";
 
 const normalizeProductNames = (products) => {
   return Array.isArray(products)
@@ -145,6 +146,7 @@ export const updateCompany = async (req, res) => {
       registrationNo,
       country,
       state,
+      district,
       officeAddress,
       subCompanyLimit,
       adminName,
@@ -191,6 +193,7 @@ export const updateCompany = async (req, res) => {
     if (registrationNo !== undefined) company.registrationNo = String(registrationNo || "").trim() || null;
     if (country !== undefined) company.country = String(country || "").trim() || null;
     if (state !== undefined) company.state = String(state || "").trim() || null;
+    if (district !== undefined) company.district = String(district || "").trim() || null;
     if (officeAddress !== undefined) company.officeAddress = String(officeAddress || "").trim() || null;
     if (subCompanyLimit !== undefined) {
       const n = Number(subCompanyLimit);
@@ -367,6 +370,63 @@ export const updateCompanyHrmsModules = async (req, res) => {
     });
   } catch (error) {
     console.error("[COMPANY][HRMS_MODULES][PUT] Failed:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+export const getAllCompaniesModuleStats = async (_req, res) => {
+  try {
+    const companies = await Company.find({}, { hrmsEnabledModules: 1, hrmsModules: 1 }).lean();
+    const companyIds = companies.map((c) => c._id);
+    const links = await CompanyProduct.find({ companyId: { $in: companyIds }, isActive: true })
+      .populate("productId", "name")
+      .lean();
+
+    const productsByCompanyId = new Map();
+    for (const link of links) {
+      const companyKey = String(link.companyId);
+      const list = productsByCompanyId.get(companyKey) || [];
+      if (link.productId?.name) list.push(link.productId.name);
+      productsByCompanyId.set(companyKey, list);
+    }
+
+    const companyById = new Map(companies.map((c) => [String(c._id), c]));
+
+    const stats = { total: 0, active: 0, inactive: 0 };
+    for (const [companyKey, products] of productsByCompanyId.entries()) {
+      const normalizedProducts = (products || [])
+        .map((p) => String(p || "").trim().toUpperCase())
+        .filter(Boolean)
+        .filter((p) => p !== "TMS");
+
+      const company = companyById.get(companyKey) || null;
+
+      for (const productName of normalizedProducts) {
+        if (productName === "CRM" || productName === "PMS") {
+          stats.total += 1;
+          stats.active += 1;
+          continue;
+        }
+
+        if (productName === "HRMS") {
+          const normalized = normalizeHrmsModuleSettings(
+            company?.hrmsEnabledModules,
+            company?.hrmsModules
+          );
+          const activeCount = Array.isArray(normalized.hrmsModules) ? normalized.hrmsModules.length : 0;
+          const totalCount = HRMS_MODULE_KEYS.length;
+          stats.total += totalCount;
+          stats.active += activeCount;
+          stats.inactive += Math.max(0, totalCount - activeCount);
+        }
+      }
+    }
+
+    stats.inactive = Math.max(0, stats.total - stats.active);
+
+    return res.json(stats);
+  } catch (error) {
+    console.error("[COMPANY][MODULE_STATS] Failed:", error);
     return res.status(500).json({ message: error.message });
   }
 };

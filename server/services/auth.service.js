@@ -7,7 +7,7 @@ import CompanyProduct from "../models/CompanyProduct.js";
 import Product from "../models/Product.js";
 import { PRODUCT_URLS, getHrmsBaseUrl } from "../constants/products.js";
 import { ROLES } from "../constants/roles.js";
-import { normalizeHrmsModuleSettings } from "../constants/hrmsModules.js";
+import { normalizeHrmsModuleSettings, toSparseHrmsEnabledModules } from "../constants/hrmsModules.js";
 import { syncCompanyToHrms } from "./hrmsProvisioning.service.js";
 
 const isLocalHost = (host) => {
@@ -845,7 +845,7 @@ export const validateLogin = async ({ identifier, password }) => {
     }
 
     const centralDb = client.db("hrms");
-    
+
     // Get list of tenant IDs to check
     let tenantIds = [];
     try {
@@ -873,9 +873,9 @@ export const validateLogin = async ({ identifier, password }) => {
         employee = await tenantDb.collection("employees").findOne({
           email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }
         });
-      } catch (e) { 
+      } catch (e) {
         console.error(`[SSO] Failed to query ${dbName}: ${e.message}`);
-        continue; 
+        continue;
       }
 
       if (employee && employee.password) {
@@ -890,8 +890,8 @@ export const validateLogin = async ({ identifier, password }) => {
         console.log(`[SSO] Password verified successfully in ${dbName}`);
         let companyId = tenantId;
         try {
-          const tenantRegistry = await centralDb.collection("tenants").findOne({ 
-            _id: mongoose.Types.ObjectId.isValid(tenantId) ? new mongoose.Types.ObjectId(tenantId) : tenantId 
+          const tenantRegistry = await centralDb.collection("tenants").findOne({
+            _id: mongoose.Types.ObjectId.isValid(tenantId) ? new mongoose.Types.ObjectId(tenantId) : tenantId
           });
           if (tenantRegistry) {
             companyId = String(tenantRegistry.externalCompanyId || tenantRegistry.companyId || tenantRegistry._id);
@@ -941,199 +941,200 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
   try {
     let latestUser = null;
 
-  if (user?._source === "hrms_employee") {
-    // If it's a virtual user resolved from HRMS Employee collection, use it directly
-    latestUser = user;
-  } else {
-    // Otherwise look up in SSO User collection
-    latestUser = await User.findById(user._id).lean();
-  }
+    if (user?._source === "hrms_employee") {
+      // If it's a virtual user resolved from HRMS Employee collection, use it directly
+      latestUser = user;
+    } else {
+      // Otherwise look up in SSO User collection
+      latestUser = await User.findById(user._id).lean();
+    }
 
-  if (!latestUser) {
-    return { error: { status: 401, message: "User not found" } };
-  }
+    if (!latestUser) {
+      return { error: { status: 401, message: "User not found" } };
+    }
 
-  const roleFromDb = latestUser.role;
-  const normalizedRoleFromDb = normalizeRole(roleFromDb);
-  const company = await resolveCompanyForToken(latestUser);
-  const products = await resolveUserProducts(latestUser);
-  const normalizedProducts = Array.isArray(products)
-    ? [...new Set(products.map((item) => String(item).toUpperCase()).filter(Boolean))]
-    : [];
-  const hrmsModuleSettings = normalizeHrmsModuleSettings(
-    company?.hrmsEnabledModules,
-    company?.hrmsModules
-  );
+    const roleFromDb = latestUser.role;
+    const normalizedRoleFromDb = normalizeRole(roleFromDb);
+    const company = await resolveCompanyForToken(latestUser);
+    const products = await resolveUserProducts(latestUser);
+    const normalizedProducts = Array.isArray(products)
+      ? [...new Set(products.map((item) => String(item).toUpperCase()).filter(Boolean))]
+      : [];
+    const hrmsModuleSettings = normalizeHrmsModuleSettings(
+      company?.hrmsEnabledModules,
+      company?.hrmsModules
+    );
 
-  console.log(
-    `[SSO] HRMS modules loaded for company=${company?._id || "N/A"} modules=${hrmsModuleSettings.hrmsModules.join(",")}`
-  );
+    console.log(
+      `[SSO] HRMS modules loaded for company=${company?._id || "N/A"} modules=${hrmsModuleSettings.hrmsModules.join(",")}`
+    );
 
-  const requestedRedirect = String(redirect || "HRMS").toUpperCase();
-  const requestedApp = (() => {
-    const explicitRedirect = String(redirect || "").trim();
-    if (isValidAbsoluteUrl(explicitRedirect)) {
-      if (validateRedirectUriForApp({ app: "tms", redirectUri: explicitRedirect }).valid) {
-        // Keep TMS app context for CRM/PMS as well (same tenant mapping),
-        // but enforce explicit product targeting via resolveLoginRedirect.
-        return "TMS";
+    const requestedRedirect = String(redirect || "HRMS").toUpperCase();
+    const requestedApp = (() => {
+      const explicitRedirect = String(redirect || "").trim();
+      if (isValidAbsoluteUrl(explicitRedirect)) {
+        if (validateRedirectUriForApp({ app: "tms", redirectUri: explicitRedirect }).valid) {
+          // Keep TMS app context for CRM/PMS as well (same tenant mapping),
+          // but enforce explicit product targeting via resolveLoginRedirect.
+          return "TMS";
+        }
+        if (validateRedirectUriForApp({ app: "hrms", redirectUri: explicitRedirect }).valid) {
+          return "HRMS";
+        }
       }
-      if (validateRedirectUriForApp({ app: "hrms", redirectUri: explicitRedirect }).valid) {
-        return "HRMS";
+      const normalized = normalizeAppName(redirect || "hrms")?.toUpperCase() || "HRMS";
+      // If no explicit redirect provided and HRMS isn't enabled, prefer TMS-family apps.
+      if (!redirect && normalized === "HRMS") {
+        const hasHrms = normalizedProducts.includes("HRMS");
+        const hasTmsFamily = normalizedProducts.some((item) => ["TMS", "PMS", "CRM"].includes(item));
+        if (!hasHrms && hasTmsFamily) {
+          if (normalizedProducts.includes("CRM")) return "CRM";
+          if (normalizedProducts.includes("PMS")) return "PMS";
+          return "TMS";
+        }
+      }
+      return normalized;
+    })();
+    let tenantId, companyId, normalizedCompanyCode;
+
+    if (latestUser._source === "hrms_employee") {
+      tenantId = String(latestUser._tenantId || latestUser.tenantId || "");
+      companyId = String(latestUser._companyId || latestUser.companyId || "");
+      normalizedCompanyCode = String(latestUser.companyCode || "").trim();
+    } else {
+      const tenantContext = await resolveHrmsTenantContext({
+        company,
+        user: latestUser,
+        products: normalizedProducts
+      });
+      normalizedCompanyCode = String(tenantContext.companyCode || "").trim();
+      const hrmsTenantId = tenantContext.tenantId ? String(tenantContext.tenantId) : null;
+      const hrmsCompanyId = tenantContext.companyId ? String(tenantContext.companyId) : null;
+      const tmsCompanyId = String(company?._id || latestUser.companyId || "").trim() || null;
+      const effectiveHrmsTenantId = hrmsTenantId || tmsCompanyId;
+      const effectiveHrmsCompanyId = hrmsCompanyId || tmsCompanyId;
+      tenantId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsTenantId;
+      companyId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsCompanyId;
+
+      if (requestedApp === "HRMS" && !isSuperRole(roleFromDb)) {
+        if (!tenantId || !companyId) {
+          logAuth("tenant_mapping_missing", {
+            userId: String(latestUser._id),
+            email: latestUser.email,
+            companyId: String(company?._id || ""),
+            companyCode: normalizedCompanyCode || null,
+            reason: tenantContext.reason || "unknown",
+            provisioningStatus: tenantContext.provisioningStatus || null
+          });
+          console.error(
+            `[SSO] HRMS tenant mapping missing user=${latestUser.email} company=${String(company?._id || "")} reason=${tenantContext.reason || "unknown"}`
+          );
+        }
       }
     }
-    const normalized = normalizeAppName(redirect || "hrms")?.toUpperCase() || "HRMS";
-    // If no explicit redirect provided and HRMS isn't enabled, prefer TMS-family apps.
-    if (!redirect && normalized === "HRMS") {
-      const hasHrms = normalizedProducts.includes("HRMS");
-      const hasTmsFamily = normalizedProducts.some((item) => ["TMS", "PMS", "CRM"].includes(item));
-      if (!hasHrms && hasTmsFamily) {
-        if (normalizedProducts.includes("CRM")) return "CRM";
-        if (normalizedProducts.includes("PMS")) return "PMS";
-        return "TMS";
-      }
-    }
-    return normalized;
-  })();
-  let tenantId, companyId, normalizedCompanyCode;
 
-  if (latestUser._source === "hrms_employee") {
-    tenantId = String(latestUser._tenantId || latestUser.tenantId || "");
-    companyId = String(latestUser._companyId || latestUser.companyId || "");
-    normalizedCompanyCode = String(latestUser.companyCode || "").trim();
-  } else {
-    const tenantContext = await resolveHrmsTenantContext({
-      company,
-      user: latestUser,
-      products: normalizedProducts
-    });
-    normalizedCompanyCode = String(tenantContext.companyCode || "").trim();
-    const hrmsTenantId = tenantContext.tenantId ? String(tenantContext.tenantId) : null;
-    const hrmsCompanyId = tenantContext.companyId ? String(tenantContext.companyId) : null;
-    const tmsCompanyId = String(company?._id || latestUser.companyId || "").trim() || null;
-    const effectiveHrmsTenantId = hrmsTenantId || tmsCompanyId;
-    const effectiveHrmsCompanyId = hrmsCompanyId || tmsCompanyId;
-    tenantId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsTenantId;
-    companyId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsCompanyId;
-
-    if (requestedApp === "HRMS" && !isSuperRole(roleFromDb)) {
-      if (!tenantId || !companyId) {
-        logAuth("tenant_mapping_missing", {
-          userId: String(latestUser._id),
-          email: latestUser.email,
-          companyId: String(company?._id || ""),
-          companyCode: normalizedCompanyCode || null,
-          reason: tenantContext.reason || "unknown",
-          provisioningStatus: tenantContext.provisioningStatus || null
-        });
-        console.error(
-          `[SSO] HRMS tenant mapping missing user=${latestUser.email} company=${String(company?._id || "")} reason=${tenantContext.reason || "unknown"}`
-        );
-      }
-    }
-  }
-
-  const extraClaims = requestedApp === "TMS" && companyId
-    ? {
+    const extraClaims = requestedApp === "TMS" && companyId
+      ? {
         orgId: companyId,
         workspaceId: null
       }
-    : {};
+      : {};
 
     console.log(
       `[SSO] hrms tenant resolved user=${latestUser.email} tenantId=${tenantId || "N/A"} companyCode=${normalizedCompanyCode || "N/A"} source=${latestUser._source || "sso"}`
     );
 
-  let token;
-  try {
-    token = buildToken({
-      user: latestUser,
-      products: normalizedProducts,
-      tenantId,
-      companyId,
-      companyCode: normalizedCompanyCode || null,
-      enabledModules: hrmsModuleSettings.hrmsEnabledModules,
-      modules: hrmsModuleSettings.hrmsModules,
-      audience: ["sso"],
-      extraClaims
-    });
-  } catch (error) {
-    logAuth("jwt_generation_failed", {
-      userId: String(latestUser._id),
-      message: error.message
-    });
-    return { error: { status: 500, message: "Token generation failed" } };
-  }
+    let token;
+    try {
+      token = buildToken({
+        user: latestUser,
+        products: normalizedProducts,
+        tenantId,
+        companyId,
+        companyCode: normalizedCompanyCode || null,
+        // Only enabled HRMS modules in JWT — HRMS UIs should use `modules` or this sparse map (missing = off).
+        enabledModules: toSparseHrmsEnabledModules(hrmsModuleSettings.hrmsEnabledModules),
+        modules: hrmsModuleSettings.hrmsModules,
+        audience: ["sso"],
+        extraClaims
+      });
+    } catch (error) {
+      logAuth("jwt_generation_failed", {
+        userId: String(latestUser._id),
+        message: error.message
+      });
+      return { error: { status: 500, message: "Token generation failed" } };
+    }
 
-  if (!token) {
-    logAuth("jwt_generation_failed", {
-      userId: String(latestUser._id),
-      message: "Empty token returned"
-    });
-    return { error: { status: 500, message: "Token generation failed" } };
-  }
+    if (!token) {
+      logAuth("jwt_generation_failed", {
+        userId: String(latestUser._id),
+        message: "Empty token returned"
+      });
+      return { error: { status: 500, message: "Token generation failed" } };
+    }
 
-  console.log(
-    `[SSO] HRMS modules injected into token userId=${String(latestUser._id)} modules=${hrmsModuleSettings.hrmsModules.join(",")}`
-  );
-  console.log(
-    `[SSO] jwt context tenantId=${tenantId || "N/A"} companyId=${companyId || "N/A"} companyCode=${normalizedCompanyCode || "N/A"}`
-  );
-  console.log(
-    `[SSO] token mapped to HRMS tenantId=${tenantId || "N/A"} companyCode=${normalizedCompanyCode || "N/A"}`
-  );
-
-  const redirectTo = resolveLoginRedirect({
-    user: latestUser,
-    redirect: redirect || "HRMS",
-    products: normalizedProducts
-  });
-
-  if (!redirectTo) {
-    logAuth("redirect_not_generated", {
-      userId: String(latestUser._id),
-      role: roleFromDb,
-      redirect: redirect || "HRMS"
-    });
-    return { error: { status: 400, message: "Redirect URL generation failed" } };
-  }
-
-  if (redirectTo === "__NO_HRMS_ACCESS__") {
-    return { error: { status: 403, message: "No HRMS access" } };
-  }
-
-  if (!isValidAbsoluteUrl(redirectTo)) {
-    logAuth("redirect_invalid", {
-      userId: String(latestUser._id),
-      email: latestUser.email,
-      role: roleFromDb,
-      redirectTo
-    });
-    return { error: { status: 400, message: "Invalid redirect URL" } };
-  }
-
-  if (redirectTo) {
     console.log(
-      `[SSO] resolved role userId=${String(latestUser._id)} email=${latestUser.email} role=${normalizedRoleFromDb}`
+      `[SSO] HRMS modules injected into token userId=${String(latestUser._id)} modules=${hrmsModuleSettings.hrmsModules.join(",")}`
     );
-    logAuth("role_resolved", {
-      userId: String(latestUser._id),
-      email: latestUser.email,
-      role: roleFromDb,
-      normalizedRole: normalizedRoleFromDb
+    console.log(
+      `[SSO] jwt context tenantId=${tenantId || "N/A"} companyId=${companyId || "N/A"} companyCode=${normalizedCompanyCode || "N/A"}`
+    );
+    console.log(
+      `[SSO] token mapped to HRMS tenantId=${tenantId || "N/A"} companyCode=${normalizedCompanyCode || "N/A"}`
+    );
+
+    const redirectTo = resolveLoginRedirect({
+      user: latestUser,
+      redirect: redirect || "HRMS",
+      products: normalizedProducts
     });
-    logAuth("redirect_generated", {
-      role: roleFromDb,
-      userId: String(latestUser._id),
-      email: latestUser.email,
-      redirectTo
-    });
-    logAuth("login_redirect_final", {
-      role: roleFromDb,
-      redirectTo
-    });
-    console.log(`[SSO] final redirect URL = ${redirectTo}`);
-  }
+
+    if (!redirectTo) {
+      logAuth("redirect_not_generated", {
+        userId: String(latestUser._id),
+        role: roleFromDb,
+        redirect: redirect || "HRMS"
+      });
+      return { error: { status: 400, message: "Redirect URL generation failed" } };
+    }
+
+    if (redirectTo === "__NO_HRMS_ACCESS__") {
+      return { error: { status: 403, message: "No HRMS access" } };
+    }
+
+    if (!isValidAbsoluteUrl(redirectTo)) {
+      logAuth("redirect_invalid", {
+        userId: String(latestUser._id),
+        email: latestUser.email,
+        role: roleFromDb,
+        redirectTo
+      });
+      return { error: { status: 400, message: "Invalid redirect URL" } };
+    }
+
+    if (redirectTo) {
+      console.log(
+        `[SSO] resolved role userId=${String(latestUser._id)} email=${latestUser.email} role=${normalizedRoleFromDb}`
+      );
+      logAuth("role_resolved", {
+        userId: String(latestUser._id),
+        email: latestUser.email,
+        role: roleFromDb,
+        normalizedRole: normalizedRoleFromDb
+      });
+      logAuth("redirect_generated", {
+        role: roleFromDb,
+        userId: String(latestUser._id),
+        email: latestUser.email,
+        redirectTo
+      });
+      logAuth("login_redirect_final", {
+        role: roleFromDb,
+        redirectTo
+      });
+      console.log(`[SSO] final redirect URL = ${redirectTo}`);
+    }
 
     return {
       token,

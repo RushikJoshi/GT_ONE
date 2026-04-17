@@ -64,6 +64,7 @@ export const createCompanyWithAdmin = async ({
   registrationNo,
   country,
   state,
+  district,
   officeAddress,
   subCompanyLimit,
   products = []
@@ -132,6 +133,7 @@ export const createCompanyWithAdmin = async ({
     registrationNo: registrationNo ? String(registrationNo).trim() : null,
     country: country ? String(country).trim() : null,
     state: state ? String(state).trim() : null,
+    district: district ? String(district).trim() : null,
     officeAddress: officeAddress ? String(officeAddress).trim() : null,
     subCompanyLimit: subCompanyLimit === undefined || subCompanyLimit === null || subCompanyLimit === ""
       ? null

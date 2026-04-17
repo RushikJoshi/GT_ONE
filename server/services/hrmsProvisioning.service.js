@@ -1,7 +1,7 @@
 import Company from "../models/Company.js";
 import User from "../models/User.js";
 import { ROLES } from "../constants/roles.js";
-import { normalizeHrmsModuleSettings } from "../constants/hrmsModules.js";
+import { normalizeHrmsModuleSettings, toSparseHrmsEnabledModules } from "../constants/hrmsModules.js";
 
 const TRANSIENT_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
@@ -108,9 +108,10 @@ export const syncCompanyToHrms = async ({
     adminEmail: String(companyAdmin?.email || adminEmail || company.email || "")
       .trim()
       .toLowerCase(),
-    companyCode,
     products: normalizedProducts,
-    enabledModules: normalizedModules.hrmsEnabledModules
+    // Sparse map + explicit list so HRMS shows only these modules (missing keys = disabled).
+    enabledModules: toSparseHrmsEnabledModules(normalizedModules.hrmsEnabledModules),
+    hrmsModuleKeys: normalizedModules.hrmsModules
   };
 
   let attempt = 0;

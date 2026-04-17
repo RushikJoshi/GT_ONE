@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
+import { appendActivity } from "../lib/activityLog";
 import "./AssignProducts.css";
 import AdminLayout from "../components/AdminLayout";
 
@@ -120,6 +121,11 @@ function AssignProducts() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
   const [selectedProductName, setSelectedProductName] = useState("");
+  const [allCompaniesModuleStats, setAllCompaniesModuleStats] = useState({
+    total: 0,
+    active: 0,
+    inactive: 0
+  });
 
   const showToast = (type, message) => {
     setToast({ type, message });
@@ -132,10 +138,11 @@ function AssignProducts() {
     setError("");
     try {
       setLoading(true);
-      const [productsRes, companiesRes, hrmsModulesRes] = await Promise.all([
+      const [productsRes, companiesRes, hrmsModulesRes, statsRes] = await Promise.all([
         api.get("/products"),
         api.get("/companies"),
-        api.get(`/super-admin/companies/${companyId}/hrms-modules`)
+        api.get(`/super-admin/companies/${companyId}/hrms-modules`),
+        api.get("/super-admin/module-stats")
       ]);
 
       const targetCompany = (companiesRes.data.companies || []).find(
@@ -147,11 +154,25 @@ function AssignProducts() {
         return;
       }
 
-      setAllProducts(productsRes.data.products || []);
-      setCompanies(companiesRes.data.companies || []);
+      const nextAllProducts = productsRes.data.products || [];
+      const nextCompanies = companiesRes.data.companies || [];
+      const nextHrmsModuleKeys = hrmsModulesRes.data.moduleKeys || [];
+
+      setAllProducts(nextAllProducts);
+      setCompanies(nextCompanies);
       setCompany(targetCompany);
-      setModuleKeys(hrmsModulesRes.data.moduleKeys || []);
+      setModuleKeys(nextHrmsModuleKeys);
       setEnabledModules(hrmsModulesRes.data.hrmsEnabledModules || {});
+
+      const serverStats = statsRes?.data || null;
+      if (
+        serverStats &&
+        typeof serverStats.total === "number" &&
+        typeof serverStats.active === "number" &&
+        typeof serverStats.inactive === "number"
+      ) {
+        setAllCompaniesModuleStats(serverStats);
+      }
     } catch (requestError) {
       setError(requestError?.response?.data?.message || "Failed to load page");
     } finally {
@@ -208,11 +229,42 @@ function AssignProducts() {
     try {
       setSavingModules(true);
       const payload = overrideEnabledModules || enabledModules;
+      const prev = enabledModules || {};
       const res = await api.put(`/super-admin/companies/${companyId}/hrms-modules`, {
         hrmsEnabledModules: payload
       });
       setEnabledModules(res.data.hrmsEnabledModules || {});
       setModuleKeys(res.data.moduleKeys || moduleKeys);
+      try {
+        const statsRes = await api.get("/super-admin/module-stats");
+        const serverStats = statsRes?.data || null;
+        if (
+          serverStats &&
+          typeof serverStats.total === "number" &&
+          typeof serverStats.active === "number" &&
+          typeof serverStats.inactive === "number"
+        ) {
+          setAllCompaniesModuleStats(serverStats);
+        }
+      } catch {
+        // ignore stats refresh failures
+      }
+
+      const keysForDiff = Array.isArray(moduleKeys) && moduleKeys.length ? moduleKeys : ALL_HRMS_MODULE_KEYS;
+      const activated = keysForDiff.filter((k) => !Boolean(prev[k]) && Boolean(payload[k]));
+      const deactivated = keysForDiff.filter((k) => Boolean(prev[k]) && !Boolean(payload[k]));
+      appendActivity({
+        type: "hrms_module_update",
+        title: "HRMS Modules Updated",
+        description: `Updated HRMS modules for ${company?.name || "company"}.`,
+        details: {
+          companyName: company?.name || null,
+          product: "HRMS",
+          activated,
+          deactivated
+        }
+      });
+
       showToast("success", "HRMS modules updated successfully");
     } catch (requestError) {
       const message = requestError?.response?.data?.message || "Failed to update HRMS modules";
@@ -380,7 +432,7 @@ function AssignProducts() {
               </div>
               <div className="stat-main">
                 <div className="stat-label">Total Modules</div>
-                <div className="stat-value">{totalModulesAllCompanies}</div>
+                <div className="stat-value">{allCompaniesModuleStats.total || totalModulesAllCompanies}</div>
               </div>
               <div className="stat-meta" />
             </div>
@@ -392,7 +444,7 @@ function AssignProducts() {
               </div>
               <div className="stat-main">
                 <div className="stat-label">Active Modules</div>
-                <div className="stat-value">{activeCount}</div>
+                <div className="stat-value">{allCompaniesModuleStats.active}</div>
               </div>
               <div className="stat-meta" />
             </div>
@@ -405,7 +457,7 @@ function AssignProducts() {
               </div>
               <div className="stat-main">
                 <div className="stat-label">Inactive Modules</div>
-                <div className="stat-value">{inactiveCount}</div>
+                <div className="stat-value">{allCompaniesModuleStats.inactive}</div>
               </div>
               <div className="stat-meta" />
             </div>
