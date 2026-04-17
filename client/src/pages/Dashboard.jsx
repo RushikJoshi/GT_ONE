@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import api from "../lib/api";
+import { appendActivity, readActivities } from "../lib/activityLog";
 import AdminLayout from "../components/AdminLayout";
 
 const defaultCreateForm = {
@@ -16,11 +17,38 @@ const defaultCreateForm = {
   gstNumber: "",
   panNumber: "",
   registrationNo: "",
+  district: "",
   country: "",
   state: "",
   officeAddress: "",
   subCompanyLimit: "",
   products: []
+};
+
+const DISTRICT_AUTOFILL = {
+  // Gujarat
+  ahmedabad: { state: "Gujarat", country: "India" },
+  surat: { state: "Gujarat", country: "India" },
+  vadodara: { state: "Gujarat", country: "India" },
+  baroda: { state: "Gujarat", country: "India" },
+  rajkot: { state: "Gujarat", country: "India" },
+  gandhinagar: { state: "Gujarat", country: "India" },
+  jamnagar: { state: "Gujarat", country: "India" },
+  bhavnagar: { state: "Gujarat", country: "India" },
+  junagadh: { state: "Gujarat", country: "India" },
+  mehsana: { state: "Gujarat", country: "India" },
+  bharuch: { state: "Gujarat", country: "India" },
+  anand: { state: "Gujarat", country: "India" },
+  valsad: { state: "Gujarat", country: "India" },
+  navsari: { state: "Gujarat", country: "India" },
+  kheda: { state: "Gujarat", country: "India" },
+  patan: { state: "Gujarat", country: "India" },
+  // Maharashtra
+  mumbai: { state: "Maharashtra", country: "India" },
+  pune: { state: "Maharashtra", country: "India" },
+  nagpur: { state: "Maharashtra", country: "India" },
+  // Delhi
+  delhi: { state: "Delhi", country: "India" }
 };
 
 function Dashboard() {
@@ -72,7 +100,50 @@ function Dashboard() {
 
   const updateField = (event) => {
     const { name, value } = event.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+    setForm((prev) => {
+      if (name === "name" || name === "adminName") {
+        const cleaned = String(value || "")
+          .replace(/[^a-zA-Z\s.]/g, "")
+          .replace(/\s+/g, " ")
+          .trimStart();
+        return { ...prev, [name]: cleaned };
+      }
+
+      if (name === "phone") {
+        const digits = String(value || "").replace(/\D/g, "").slice(0, 15);
+        return { ...prev, phone: digits };
+      }
+
+      if (name === "district") {
+        const cleaned = String(value || "")
+          .replace(/[^a-zA-Z\s]/g, "")
+          .replace(/\s+/g, " ")
+          .trimStart();
+        const key = cleaned.trim().toLowerCase();
+        const match = DISTRICT_AUTOFILL[key];
+        if (match) {
+          return { ...prev, district: cleaned, state: match.state, country: match.country };
+        }
+        // If district typed and country empty, default to India (can be edited)
+        const nextCountry = prev.country ? prev.country : cleaned.trim() ? "India" : prev.country;
+        return { ...prev, district: cleaned, country: nextCountry };
+      }
+
+      if (name === "country" || name === "state") {
+        const cleaned = String(value || "")
+          .replace(/[^a-zA-Z\s]/g, "")
+          .replace(/\s+/g, " ")
+          .trimStart();
+        return { ...prev, [name]: cleaned };
+      }
+
+      if (name === "subCompanyLimit") {
+        const digits = String(value || "").replace(/\D/g, "");
+        return { ...prev, subCompanyLimit: digits };
+      }
+
+      return { ...prev, [name]: value };
+    });
   };
 
   const toggleProduct = (productName) => {
@@ -92,6 +163,16 @@ function Dashboard() {
     try {
       setSubmitting(true);
       await api.post("/companies", { ...form, adminEmail: form.adminEmail || form.email });
+      appendActivity({
+        type: "company_create",
+        title: "Company Created",
+        description: `${String(form.name || "Company").trim()} was created.`,
+        details: {
+          companyName: String(form.name || "").trim(),
+          companyEmail: String(form.email || "").trim(),
+          products: Array.isArray(form.products) ? form.products : []
+        }
+      });
       setForm(defaultCreateForm);
       setCompanyLogoPreview("");
       setMessage("Company created successfully");
@@ -120,6 +201,7 @@ function Dashboard() {
     gstNumber: "",
     panNumber: "",
     registrationNo: "",
+    district: "",
     country: "",
     state: "",
     officeAddress: "",
@@ -181,6 +263,7 @@ function Dashboard() {
   const saveProductChanges = async () => {
     try {
       setSubmitting(true);
+      const previousProducts = Array.isArray(selectedCompany?.products) ? selectedCompany.products : [];
       const res = await api.put(`/companies/${selectedCompany._id}/products`, {
         products: editProducts
       });
@@ -196,6 +279,22 @@ function Dashboard() {
       setIsEditing(false);
       setMessage("Configuration updated successfully");
       setTimeout(() => setMessage(""), 3000);
+
+      const prevSet = new Set(previousProducts.map((p) => String(p).toUpperCase()));
+      const nextSet = new Set((editProducts || []).map((p) => String(p).toUpperCase()));
+      const added = [...nextSet].filter((p) => !prevSet.has(p));
+      const removed = [...prevSet].filter((p) => !nextSet.has(p));
+      appendActivity({
+        type: "product_update",
+        title: "Products Updated",
+        description: `Updated products for ${selectedCompany?.name || "company"}.`,
+        details: {
+          companyName: selectedCompany?.name,
+          added,
+          removed,
+          products: editProducts
+        }
+      });
     } catch (err) {
       setError(err?.response?.data?.message || "Failed to update configuration");
     } finally {
@@ -216,6 +315,7 @@ function Dashboard() {
       gstNumber: company?.gstNumber || "",
       panNumber: company?.panNumber || "",
       registrationNo: company?.registrationNo || "",
+      district: company?.district || "",
       country: company?.country || "",
       state: company?.state || "",
       officeAddress: company?.officeAddress || "",
@@ -238,6 +338,22 @@ function Dashboard() {
 
     try {
       setSubmitting(true);
+      const previousSnapshot = editCompany
+        ? {
+            name: editCompany?.name,
+            email: editCompany?.email,
+            adminName: editCompany?.admin?.name || null,
+            phone: editCompany?.phone || null,
+            companyType: editCompany?.companyType || null,
+            gstNumber: editCompany?.gstNumber || null,
+            panNumber: editCompany?.panNumber || null,
+            registrationNo: editCompany?.registrationNo || null,
+            country: editCompany?.country || null,
+            state: editCompany?.state || null,
+            officeAddress: editCompany?.officeAddress || null,
+            subCompanyLimit: editCompany?.subCompanyLimit ?? null
+          }
+        : null;
       const normalizedName = String(editForm.name || "").trim();
       const normalizedEmail = String(editForm.email || "")
         .trim()
@@ -250,6 +366,7 @@ function Dashboard() {
         gstNumber: String(editForm.gstNumber || "").trim(),
         panNumber: String(editForm.panNumber || "").trim(),
         registrationNo: String(editForm.registrationNo || "").trim(),
+        district: String(editForm.district || "").trim(),
         country: String(editForm.country || "").trim(),
         state: String(editForm.state || "").trim(),
         officeAddress: String(editForm.officeAddress || "").trim(),
@@ -299,6 +416,42 @@ function Dashboard() {
         setCompanies((prev) => prev.map(mergeCompanyForUi));
         setSelectedCompany((prev) => (prev?._id === updated._id ? mergeCompanyForUi(prev) : prev));
         setProductTabCompany((prev) => (prev?._id === updated._id ? mergeCompanyForUi(prev) : prev));
+
+        const changes = [];
+        if (previousSnapshot) {
+          const nextSnapshot = {
+            name: payload.name,
+            email: payload.email,
+            adminName: payload.adminName,
+            phone: payload.phone || null,
+            companyType: payload.companyType || null,
+            gstNumber: payload.gstNumber || null,
+            panNumber: payload.panNumber || null,
+            registrationNo: payload.registrationNo || null,
+            country: payload.country || null,
+            state: payload.state || null,
+            officeAddress: payload.officeAddress || null,
+            subCompanyLimit: payload.subCompanyLimit ?? null
+          };
+          for (const key of Object.keys(nextSnapshot)) {
+            if (String(previousSnapshot[key] ?? "") !== String(nextSnapshot[key] ?? "")) {
+              changes.push({ field: key, from: previousSnapshot[key] ?? "", to: nextSnapshot[key] ?? "" });
+            }
+          }
+          if (payload.adminPassword) {
+            changes.push({ field: "adminPassword", from: "••••••", to: "updated" });
+          }
+        }
+
+        appendActivity({
+          type: "company_update",
+          title: "Company Updated",
+          description: `Updated company details for ${payload.name}.`,
+          details: {
+            companyName: payload.name,
+            changes
+          }
+        });
       } else {
         await loadData();
       }
@@ -351,6 +504,15 @@ function Dashboard() {
             : c
         )
       );
+      appendActivity({
+        type: "company_status",
+        title: "Company Status Updated",
+        description: `${company.name} is now ${nextActive ? "ACTIVE" : "INACTIVE"}.`,
+        details: {
+          companyName: company.name,
+          status: nextActive ? "ACTIVE" : "INACTIVE"
+        }
+      });
     } catch (err) {
       setError(err?.response?.data?.message || "Failed to update status");
     } finally {
@@ -512,13 +674,14 @@ function Dashboard() {
                     disabled={safePage === 1}
                     onClick={() => setDashboardCompanyPage((p) => Math.max(1, p - 1))}
                     style={{
-                      minWidth: 36,
-                      height: 34,
-                      borderRadius: 10,
+                      minWidth: 44,
+                      height: 40,
+                      borderRadius: 12,
                       border: "1px solid #e2e8f0",
                       background: safePage === 1 ? "#f8fafc" : "#ffffff",
                       color: "#64748b",
                       fontWeight: 800,
+                      fontSize: "1rem",
                       cursor: safePage === 1 ? "not-allowed" : "pointer"
                     }}
                   >
@@ -534,13 +697,14 @@ function Dashboard() {
                     disabled={safePage === totalPages}
                     onClick={() => setDashboardCompanyPage((p) => Math.min(totalPages, p + 1))}
                     style={{
-                      minWidth: 36,
-                      height: 34,
-                      borderRadius: 10,
+                      minWidth: 44,
+                      height: 40,
+                      borderRadius: 12,
                       border: "1px solid #e2e8f0",
                       background: safePage === totalPages ? "#f8fafc" : "#ffffff",
                       color: "#64748b",
                       fontWeight: 800,
+                      fontSize: "1rem",
                       cursor: safePage === totalPages ? "not-allowed" : "pointer"
                     }}
                   >
@@ -951,13 +1115,14 @@ function Dashboard() {
                       disabled={safeCompanyPage === 1}
                       onClick={() => setCompanyPage((p) => Math.max(1, p - 1))}
                       style={{
-                        minWidth: '36px',
-                        height: '34px',
-                        borderRadius: '10px',
+                        minWidth: '44px',
+                        height: '40px',
+                        borderRadius: '12px',
                         border: '1px solid #e2e8f0',
                         background: safeCompanyPage === 1 ? '#f8fafc' : '#ffffff',
                         color: '#64748b',
                         fontWeight: 800,
+                        fontSize: '1rem',
                         cursor: safeCompanyPage === 1 ? 'not-allowed' : 'pointer'
                       }}
                     >
@@ -973,13 +1138,14 @@ function Dashboard() {
                       disabled={safeCompanyPage === totalCompanyPages}
                       onClick={() => setCompanyPage((p) => Math.min(totalCompanyPages, p + 1))}
                       style={{
-                        minWidth: '36px',
-                        height: '34px',
-                        borderRadius: '10px',
+                        minWidth: '44px',
+                        height: '40px',
+                        borderRadius: '12px',
                         border: '1px solid #e2e8f0',
                         background: safeCompanyPage === totalCompanyPages ? '#f8fafc' : '#ffffff',
                         color: '#64748b',
                         fontWeight: 800,
+                        fontSize: '1rem',
                         cursor: safeCompanyPage === totalCompanyPages ? 'not-allowed' : 'pointer'
                       }}
                     >
@@ -998,12 +1164,12 @@ function Dashboard() {
                <button 
                 onClick={() => setSelectedCompany(null)}
                 style={{ 
-                  background: '#ffffff', color: '#1e293b', width: '44px', height: '44px', borderRadius: '14px', 
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1.5px solid #e2e8f0', cursor: 'pointer',
+                  background: 'transparent', color: '#1e293b', width: '44px', height: '44px', borderRadius: '14px', 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer',
                   transition: 'all 0.2s'
                 }}
-                onMouseOver={(e) => e.currentTarget.style.borderColor = '#2563eb'}
-                onMouseOut={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}
+                onMouseOver={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                onMouseOut={(e) => (e.currentTarget.style.background = 'transparent')}
                >
                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                    <path d="M19 12H5M12 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
@@ -1011,7 +1177,6 @@ function Dashboard() {
                </button>
                <div>
                   <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>{selectedCompany.name}</h2>
-                  <p className="muted" style={{ fontSize: '0.85rem', margin: 0 }}>Corporate Resource Management</p>
                </div>
             </div>
 
@@ -1022,8 +1187,7 @@ function Dashboard() {
                   <div className="card" style={{ padding: '24px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                        <div>
-                          <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: '#1e293b' }}>Module Suite</h3>
-                          <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 0 0 0' }}>Configure license entitlements for this entity</p>
+                          <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: '#1e293b' }}>GT Product</h3>
                        </div>
                        <div style={{ display: 'flex', gap: '10px' }}>
                           {isEditing ? (
@@ -1038,7 +1202,9 @@ function Dashboard() {
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
-                       {products.map(p => {
+                       {products
+                         .filter((p) => String(p?.name || "").trim().toUpperCase() !== "TMS")
+                         .map((p) => {
                          const isActive = isEditing 
                             ? editProducts.includes(p.name)
                             : (selectedCompany.products || []).includes(p.name);
@@ -1114,52 +1280,82 @@ function Dashboard() {
           </div>
         );
       case "activities":
-        // Generate mock activities from companies data
-        const activities = companies.flatMap(company => {
-          const events = [];
-          
-          // Registration event
-          events.push({
-            id: `reg-${company._id}`,
-            type: 'registration',
-            title: 'New Company Registered',
-            description: `${company.name} joined the platform.`,
-            time: company.createdAt,
-            icon: (
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-              </svg>
-            ),
-            color: '#2563eb'
-          });
+        const activityItems = readActivities().sort(
+          (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
+        );
 
-          // Configuration events (mocked based on products)
-          (company.products || []).forEach(product => {
-            events.push({
-              id: `conf-${company._id}-${product}`,
-              type: 'configuration',
-              title: 'Module Configured',
-              description: `Assigned ${product} module to ${company.name}.`,
-              time: company.updatedAt,
+        const typeMeta = (type) => {
+          const t = String(type || "").toLowerCase();
+          if (t === "company_create") {
+            return {
+              color: "#2563eb",
+              icon: (
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+              )
+            };
+          }
+          if (t === "company_update") {
+            return {
+              color: "#7c3aed",
+              icon: (
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 20h9" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                </svg>
+              )
+            };
+          }
+          if (t === "product_update") {
+            return {
+              color: "#059669",
+              icon: (
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2 2 7l10 5 10-5-10-5Z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 17l10 5 10-5" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 12l10 5 10-5" />
+                </svg>
+              )
+            };
+          }
+          if (t === "module_update" || t === "hrms_module_update") {
+            return {
+              color: "#0ea5e9",
               icon: (
                 <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.154-2.046-.441-2.992z" />
                 </svg>
-              ),
-              color: '#059669'
-            });
-          });
-
-          return events;
-        }).sort((a, b) => new Date(b.time) - new Date(a.time));
+              )
+            };
+          }
+          if (t === "company_status") {
+            return {
+              color: "#f97316",
+              icon: (
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 2L3 14h7l-1 8 10-12h-7l1-8Z" />
+                </svg>
+              )
+            };
+          }
+          return {
+            color: "#64748b",
+            icon: (
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
+              </svg>
+            )
+          };
+        };
 
         const search = String(activitySearch || "").trim().toLowerCase();
         const filteredActivities = search
-          ? activities.filter((a) => {
+          ? activityItems.filter((a) => {
               const hay = `${a.title || ""} ${a.description || ""}`.toLowerCase();
               return hay.includes(search);
             })
-          : activities;
+          : activityItems;
 
         const totalPages = Math.ceil(filteredActivities.length / activitiesPerPage);
         const startIndex = (currentActivityPage - 1) * activitiesPerPage;
@@ -1327,20 +1523,32 @@ function Dashboard() {
                 </div>
               ) : (
                 <div style={{ display: 'grid', gap: '14px', position: 'relative' }}>
-                  <div style={{ position: 'absolute', left: '17px', top: '10px', bottom: '10px', width: '2px', background: 'linear-gradient(to bottom, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%)' }} />
-                  
                   {pagedActivities.map((activity) => (
-                    <div key={activity.id} className="activity-row" style={{ 
-                      display: 'flex', gap: '20px', position: 'relative', zIndex: 1,
-                      padding: '12px', borderRadius: '12px', transition: 'all 0.2s ease',
-                    }}>
+                    <details
+                      key={activity.id}
+                      style={{
+                        borderRadius: 14,
+                        background: "#ffffff",
+                        border: "1px solid #eef2f6",
+                        padding: 12
+                      }}
+                    >
+                      <summary
+                        style={{
+                          listStyle: "none",
+                          display: "flex",
+                          gap: 20,
+                          cursor: "pointer",
+                          alignItems: "flex-start"
+                        }}
+                      >
                       <div style={{ 
-                        width: '36px', height: '36px', background: 'white', border: `2px solid ${activity.color}33`, 
+                        width: '36px', height: '36px', background: 'white', border: `2px solid ${typeMeta(activity.type).color}33`, 
                         borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                        color: activity.color, flexShrink: 0, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
+                        color: typeMeta(activity.type).color, flexShrink: 0, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
                         fontSize: '14px'
                       }}>
-                        {activity.icon}
+                        {typeMeta(activity.type).icon}
                       </div>
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
@@ -1357,7 +1565,64 @@ function Dashboard() {
                            <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic' }}>{new Date(activity.time).toLocaleDateString()}</span>
                         </div>
                       </div>
-                    </div>
+                      </summary>
+
+                      {activity.details ? (
+                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #f1f5f9" }}>
+                          <div style={{ display: "grid", gap: 8 }}>
+                            {activity.details.companyName ? (
+                              <div style={{ fontSize: 12, color: "#334155", fontWeight: 800 }}>
+                                Company: <span style={{ fontWeight: 700 }}>{activity.details.companyName}</span>
+                              </div>
+                            ) : null}
+                            {activity.details.product ? (
+                              <div style={{ fontSize: 12, color: "#334155", fontWeight: 800 }}>
+                                Product: <span style={{ fontWeight: 700 }}>{activity.details.product}</span>
+                              </div>
+                            ) : null}
+
+                            {Array.isArray(activity.details.added) && activity.details.added.length ? (
+                              <div style={{ fontSize: 12, color: "#166534", fontWeight: 800 }}>
+                                Added: <span style={{ fontWeight: 700 }}>{activity.details.added.join(", ")}</span>
+                              </div>
+                            ) : null}
+                            {Array.isArray(activity.details.removed) && activity.details.removed.length ? (
+                              <div style={{ fontSize: 12, color: "#991b1b", fontWeight: 800 }}>
+                                Removed: <span style={{ fontWeight: 700 }}>{activity.details.removed.join(", ")}</span>
+                              </div>
+                            ) : null}
+
+                            {Array.isArray(activity.details.activated) && activity.details.activated.length ? (
+                              <div style={{ fontSize: 12, color: "#166534", fontWeight: 800 }}>
+                                Activated: <span style={{ fontWeight: 700 }}>{activity.details.activated.join(", ")}</span>
+                              </div>
+                            ) : null}
+                            {Array.isArray(activity.details.deactivated) && activity.details.deactivated.length ? (
+                              <div style={{ fontSize: 12, color: "#991b1b", fontWeight: 800 }}>
+                                Deactivated: <span style={{ fontWeight: 700 }}>{activity.details.deactivated.join(", ")}</span>
+                              </div>
+                            ) : null}
+
+                            {Array.isArray(activity.details.changes) && activity.details.changes.length ? (
+                              <div style={{ display: "grid", gap: 6 }}>
+                                <div style={{ fontSize: 12, color: "#334155", fontWeight: 900 }}>
+                                  Changes
+                                </div>
+                                <div style={{ display: "grid", gap: 6 }}>
+                                  {activity.details.changes.slice(0, 12).map((c, idx) => (
+                                    <div key={idx} style={{ fontSize: 12, color: "#475569" }}>
+                                      <span style={{ fontWeight: 900, color: "#0f172a" }}>{c.field}</span>:{" "}
+                                      <span style={{ color: "#64748b" }}>{String(c.from)}</span> →{" "}
+                                      <span style={{ color: "#0f172a", fontWeight: 800 }}>{String(c.to)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                    </details>
                   ))}
                 </div>
               )}
@@ -1593,7 +1858,7 @@ function Dashboard() {
                 background: "white",
                 width: "100%",
                 height: "100%",
-                borderRadius: "0px",
+                borderRadius: "10px",
                 border: "1px solid #e2e8f0",
                 boxShadow: "0 25px 50px -12px rgba(0,0,0,0.2)",
                 overflow: "hidden"
@@ -1894,6 +2159,30 @@ function Dashboard() {
                         value={editForm.registrationNo}
                         onChange={(e) => setEditForm((p) => ({ ...p, registrationNo: e.target.value }))}
                         placeholder="Registration no. (optional)"
+                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                        DISTRICT
+                      </label>
+                      <input
+                        value={editForm.district}
+                        onChange={(e) => {
+                          const cleaned = String(e.target.value || "")
+                            .replace(/[^a-zA-Z\s]/g, "")
+                            .replace(/\s+/g, " ")
+                            .trimStart();
+                          const key = cleaned.trim().toLowerCase();
+                          const match = DISTRICT_AUTOFILL[key];
+                          if (match) {
+                            setEditForm((p) => ({ ...p, district: cleaned, state: match.state, country: match.country }));
+                          } else {
+                            setEditForm((p) => ({ ...p, district: cleaned }));
+                          }
+                        }}
+                        placeholder="District (optional)"
                         style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
                       />
                     </div>
@@ -2258,12 +2547,12 @@ function Dashboard() {
                           height: 32,
                           borderRadius: 12,
                           border: "none",
-                          background: "#ffffff",
+                          background: "transparent",
                           color: "#64748b",
                           cursor: "pointer",
                           display: "grid",
                           placeItems: "center",
-                          boxShadow: "0 6px 14px rgba(15, 23, 42, 0.08)"
+                          boxShadow: "none"
                         }}
                         aria-label={showCreatePassword ? "Hide password" : "Show password"}
                       >
@@ -2292,7 +2581,9 @@ function Dashboard() {
                       name="phone"
                       value={form.phone}
                       onChange={updateField}
-                        placeholder="+91 98765 43210"
+                      inputMode="numeric"
+                      maxLength={15}
+                      placeholder="9876543210"
                       style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                     />
                   </div>
@@ -2376,6 +2667,18 @@ function Dashboard() {
                       </div>
                   <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          DISTRICT
+                        </label>
+                        <input
+                          name="district"
+                          value={form.district}
+                          onChange={updateField}
+                          placeholder="District (optional)"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+                  <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                           COUNTRY
                         </label>
                         <input
@@ -2386,20 +2689,23 @@ function Dashboard() {
                           style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                         />
                       </div>
-                  <div>
-                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                          STATE
-                        </label>
-                        <input
-                          name="state"
-                          value={form.state}
-                          onChange={updateField}
-                          placeholder="State (optional)"
-                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                        />
-                      </div>
                   </div>
-                  <div style={{ gridColumn: '1 / -1' }}>
+
+                  {/* State + Office Address on one line */}
+                  <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '14px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                        STATE
+                      </label>
+                      <input
+                        name="state"
+                        value={form.state}
+                        onChange={updateField}
+                        placeholder="State (optional)"
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                      />
+                    </div>
+                    <div>
                       <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                         OFFICE ADDRESS
                       </label>
@@ -2411,6 +2717,7 @@ function Dashboard() {
                         style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                       />
                     </div>
+                  </div>
 
                     <div style={{ marginTop: '10px', gridColumn: '1 / -1' }}>
                       <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#475569', marginBottom: '10px' }}>

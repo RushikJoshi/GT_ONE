@@ -9,6 +9,45 @@ function Login() {
   const [searchParams] = useSearchParams();
   const { setUser } = useAuth();
 
+  const markRedirectAttempt = (url) => {
+    try {
+      const key = `gtone.redirectAttempt:${url}`;
+      window.sessionStorage.setItem(key, String(Date.now()));
+    } catch {
+      // ignore storage failures
+    }
+  };
+
+  const shouldBlockAutoRedirect = (url) => {
+    try {
+      const key = `gtone.redirectAttempt:${url}`;
+      const last = Number(window.sessionStorage.getItem(key) || "0");
+      // Prevent redirect ping-pong loops: if we already tried to send the user to this URL recently,
+      // don't auto-redirect again.
+      return Number.isFinite(last) && last > 0 && Date.now() - last < 60_000;
+    } catch {
+      return false;
+    }
+  };
+
+  const safeRedirectTo = (url, { replace = true } = {}) => {
+    if (!url || typeof url !== "string") return false;
+    if (!/^https?:\/\//i.test(url)) return false;
+
+    if (shouldBlockAutoRedirect(url)) {
+      // Silent block (no UI banner) to keep SPA stable.
+      return false;
+    }
+
+    markRedirectAttempt(url);
+    if (replace) {
+      window.location.replace(url);
+    } else {
+      window.location.assign(url);
+    }
+    return true;
+  };
+
   const resolveFallbackRedirect = (role) => {
     const normalizedRole = String(role || "")
       .trim()
@@ -65,7 +104,7 @@ function Login() {
         setUser(nextUser);
 
         if (hasExplicitRedirectUrl) {
-          window.location.replace(redirect);
+          safeRedirectTo(redirect, { replace: true });
           return;
         }
 
@@ -80,7 +119,7 @@ function Login() {
 
         const roleRedirect = resolveFallbackRedirect(normalizedRole);
         if (roleRedirect) {
-          window.location.replace(roleRedirect);
+          safeRedirectTo(roleRedirect, { replace: true });
           return;
         }
 
@@ -162,13 +201,13 @@ function Login() {
         const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
         if (typeof redirectUrl === "string" && redirectUrl.startsWith("http")) {
-          window.location.assign(redirectUrl);
+          safeRedirectTo(redirectUrl, { replace: false });
           return;
         }
 
         const fallbackRedirect = resolveFallbackRedirect(normalizedRole);
         if (fallbackRedirect) {
-          window.location.assign(fallbackRedirect);
+          safeRedirectTo(fallbackRedirect, { replace: false });
           return;
         }
 
@@ -214,13 +253,13 @@ function Login() {
       const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
       if (typeof redirectUrl === "string" && redirectUrl.startsWith("http")) {
-        window.location.assign(redirectUrl);
+        safeRedirectTo(redirectUrl, { replace: false });
         return;
       }
 
       const fallbackRedirect = resolveFallbackRedirect(normalizedRole);
       if (fallbackRedirect) {
-        window.location.assign(fallbackRedirect);
+        safeRedirectTo(fallbackRedirect, { replace: false });
         return;
       }
 

@@ -53,6 +53,19 @@ export const AuthProvider = ({ children }) => {
     loadSession();
   }, []);
 
+  useEffect(() => {
+    const handler = (event) => {
+      const status = event?.detail?.status;
+      if (status === 401 || status === 403) {
+        setUser(null);
+        writeCachedUser(null);
+      }
+    };
+
+    window.addEventListener("auth:unauthorized", handler);
+    return () => window.removeEventListener("auth:unauthorized", handler);
+  }, []);
+
   const logout = async () => {
     try {
       await api.post("/auth/logout");

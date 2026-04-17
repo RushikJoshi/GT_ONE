@@ -42,3 +42,16 @@ export const normalizeHrmsModuleSettings = (hrmsEnabledModules, hrmsModules) => 
     hrmsModules: modules
   };
 };
+
+/**
+ * JWT / HRMS sync: only include keys that are enabled (`true`).
+ * Consumers must treat missing keys as disabled (no "default true" on missing keys).
+ */
+export const toSparseHrmsEnabledModules = (hrmsEnabledModules) => {
+  if (!hrmsEnabledModules || typeof hrmsEnabledModules !== "object") return {};
+  const out = {};
+  for (const key of HRMS_MODULE_KEYS) {
+    if (Boolean(hrmsEnabledModules[key])) out[key] = true;
+  }
+  return out;
+};

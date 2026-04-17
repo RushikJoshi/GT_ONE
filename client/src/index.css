@@ -1,9 +1,11 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+/** @format */
+
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap");
 
 :root {
   font-family: "Plus Jakarta Sans", "Inter", sans-serif;
   color: #0f172a;
-  background: #f8fafc;
+  background: rgb(248, 250, 252);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -15,11 +17,9 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: #f8fafc;
-  background-image: 
-    radial-gradient(at 0% 0%, hsla(214, 100%, 97%, 1) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, hsla(214, 100%, 97%, 1) 0px, transparent 50%);
-  background-attachment: fixed;
+  background-color: rgb(248, 250, 252);
+  background-image: none;
+  background-attachment: initial;
 }
 
 h1,

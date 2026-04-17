@@ -73,6 +73,11 @@ const companySchema = new mongoose.Schema(
       default: null,
       trim: true
     },
+    district: {
+      type: String,
+      default: null,
+      trim: true
+    },
     officeAddress: {
       type: String,
       default: null,
