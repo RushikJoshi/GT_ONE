@@ -9,6 +9,8 @@ import { PRODUCT_URLS, getHrmsBaseUrl } from "../constants/products.js";
 import { ROLES } from "../constants/roles.js";
 import { normalizeHrmsModuleSettings, toSparseHrmsEnabledModules } from "../constants/hrmsModules.js";
 import { syncCompanyToHrms } from "./hrmsProvisioning.service.js";
+import RefreshToken from "../models/RefreshToken.js";
+import crypto from "crypto";
 
 const isLocalHost = (host) => {
   const normalized = String(host || "").toLowerCase();
@@ -68,7 +70,9 @@ const APP_ALIASES = {
   hrms: "hrms",
   tms: "tms",
   pms: "tms",
-  crm: "tms"
+  crm: "tms",
+  psa: "psa",
+  dms: "dms"
 };
 
 const LOCAL_REDIRECT_ALLOWLIST = {
@@ -83,6 +87,18 @@ const LOCAL_REDIRECT_ALLOWLIST = {
     "http://localhost:5173/dashboard",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5173/dashboard"
+  ],
+  psa: [
+    "http://localhost:5175",
+    "http://localhost:5175/dashboard",
+    "http://127.0.0.1:5175",
+    "http://127.0.0.1:5175/dashboard"
+  ],
+  dms: [
+    "http://localhost:5177",
+    "http://localhost:5177/dashboard",
+    "http://127.0.0.1:5177",
+    "http://127.0.0.1:5177/dashboard"
   ]
 };
 
@@ -551,7 +567,14 @@ const cleanupRevokedSessions = () => {
 };
 
 const getRedirectAllowlist = (canonicalApp) => {
-  const envKey = canonicalApp === "hrms" ? "SSO_REDIRECT_ALLOWLIST_HRMS" : "SSO_REDIRECT_ALLOWLIST_TMS";
+  const envKey =
+    canonicalApp === "hrms"
+      ? "SSO_REDIRECT_ALLOWLIST_HRMS"
+      : canonicalApp === "psa"
+        ? "SSO_REDIRECT_ALLOWLIST_PSA"
+        : canonicalApp === "dms"
+          ? "SSO_REDIRECT_ALLOWLIST_DMS"
+          : "SSO_REDIRECT_ALLOWLIST_TMS";
   const envList = (process.env[envKey] || "")
     .split(",")
     .map((item) => item.trim())
@@ -619,6 +642,7 @@ export const buildToken = ({
     email: user.email,
     name: user.name,
     role: user.role,
+    product: user.product || extraClaims.product || null,
     tenantId: tenantId || null,
     companyCode: companyCode || null,
     companyId: companyId || (user.companyId ? String(user.companyId) : null),
@@ -682,6 +706,8 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
     : [];
   const hasHrmsAccess = normalizedProducts.includes("HRMS");
   const hasTmsFamily = normalizedProducts.some((item) => ["TMS", "PMS", "CRM"].includes(item));
+  const hasPsaAccess = normalizedProducts.includes("PSA");
+  const hasDmsAccess = normalizedProducts.includes("DMS");
 
   if (isValidAbsoluteUrl(explicitRedirect)) {
     const hrmsValidation = validateRedirectUriForApp({ app: "hrms", redirectUri: explicitRedirect });
@@ -713,6 +739,16 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
       } catch {
         return null;
       }
+    }
+
+    const psaValidation = validateRedirectUriForApp({ app: "psa", redirectUri: explicitRedirect });
+    if (psaValidation.valid) {
+      return isSuperRole(user.role) || hasPsaAccess ? explicitRedirect : null;
+    }
+
+    const dmsValidation = validateRedirectUriForApp({ app: "dms", redirectUri: explicitRedirect });
+    if (dmsValidation.valid) {
+      return isSuperRole(user.role) || hasDmsAccess ? explicitRedirect : null;
     }
   }
 
@@ -784,6 +820,32 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
     return buildAppUrlLikeOrigin(PRODUCT_URLS.TMS, requestOrigin);
   }
 
+  if (requestedRedirect === "PSA" && PRODUCT_URLS.PSA) {
+    if (!isSuperRole(user.role) && !hasPsaAccess) return null;
+    const base = buildAppUrlLikeOrigin(PRODUCT_URLS.PSA, requestOrigin);
+    try {
+      const u = new URL(base);
+      u.pathname = "/dashboard";
+      u.search = "";
+      return u.toString();
+    } catch {
+      return base;
+    }
+  }
+
+  if (requestedRedirect === "DMS" && PRODUCT_URLS.DMS) {
+    if (!isSuperRole(user.role) && !hasDmsAccess) return null;
+    const base = buildAppUrlLikeOrigin(PRODUCT_URLS.DMS, requestOrigin);
+    try {
+      const u = new URL(base);
+      u.pathname = "/dashboard";
+      u.search = "";
+      return u.toString();
+    } catch {
+      return base;
+    }
+  }
+
   if (products.includes(requestedRedirect) && PRODUCT_URLS[requestedRedirect]) {
     return buildAppUrlLikeOrigin(PRODUCT_URLS[requestedRedirect], requestOrigin);
   }
@@ -811,6 +873,12 @@ const getHrmsAuthBaseUrl = () => {
 
 const isEmailLike = (value) => String(value || "").includes("@");
 
+const shouldDebugHrmsLogin = () => {
+  const flag = String(process.env.DEBUG_HRMS_LOGIN || "").trim().toLowerCase();
+  if (flag === "1" || flag === "true" || flag === "yes") return true;
+  return String(process.env.NODE_ENV || "").toLowerCase() !== "production";
+};
+
 const allowPlaintextEmployeePassword = () => {
   if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
     return String(process.env.ALLOW_PLAINTEXT_EMPLOYEE_PASSWORD || "").trim().toLowerCase() === "true";
@@ -818,14 +886,53 @@ const allowPlaintextEmployeePassword = () => {
   return String(process.env.ALLOW_PLAINTEXT_EMPLOYEE_PASSWORD || "true").trim().toLowerCase() !== "false";
 };
 
+const allowEmployeeOtpFallback = () => {
+  // If true, HRMS employees can proceed to OTP even if password hash mismatch.
+  // This is useful when migrating legacy password hashes or when the HRMS DB stores passwords differently.
+  // Security still relies on OTP delivered to the employee's email.
+  if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
+    return String(process.env.ALLOW_HRMS_EMPLOYEE_OTP_FALLBACK || "").trim().toLowerCase() === "true";
+  }
+  return String(process.env.ALLOW_HRMS_EMPLOYEE_OTP_FALLBACK || "true").trim().toLowerCase() !== "false";
+};
+
 const verifyEmployeePassword = async (plain, stored) => {
   const candidate = String(plain || "");
-  const hashOrPlain = String(stored || "");
+  let hashOrPlain = String(stored || "");
   if (!candidate || !hashOrPlain) return false;
 
   const looksLikeBcrypt = /^\$2[aby]\$\d{2}\$/.test(hashOrPlain);
   if (looksLikeBcrypt) {
-    return bcrypt.compare(candidate, hashOrPlain);
+    // Some systems (notably PHP/Laravel) store bcrypt hashes with $2y$ prefix.
+    // bcryptjs may not always accept $2y$, so normalize to $2b$ for comparison.
+    const prefix = hashOrPlain.slice(0, 4);
+    if (shouldDebugHrmsLogin()) {
+      console.log(`[SSO][HRMS_LOGIN][DEBUG] bcrypt prefix=${prefix}`);
+    }
+
+    if (hashOrPlain.startsWith("$2y$")) {
+      const normalized = `$2b$${hashOrPlain.slice("$2y$".length)}`;
+      try {
+        // Try normalized first
+        const ok = await bcrypt.compare(candidate, normalized);
+        if (ok) return true;
+      } catch {
+        // ignore and fall through
+      }
+
+      // Fallback: try raw $2y$ (some bcryptjs builds accept it)
+      try {
+        return await bcrypt.compare(candidate, hashOrPlain);
+      } catch {
+        return false;
+      }
+    }
+
+    try {
+      return await bcrypt.compare(candidate, hashOrPlain);
+    } catch {
+      return false;
+    }
   }
 
   // Legacy/dev: stored password is plaintext
@@ -847,30 +954,71 @@ const buildEmployeeEmailMatch = (normalizedEmail) => {
     $or: [
       { email: { $regex: rx } },
       { Email: { $regex: rx } },
+      { emailId: { $regex: rx } },
+      { EmailId: { $regex: rx } },
+      { emailID: { $regex: rx } },
+      { userEmail: { $regex: rx } },
+      { user_email: { $regex: rx } },
       { workEmail: { $regex: rx } },
       { personalEmail: { $regex: rx } },
-      { officialEmail: { $regex: rx } }
+      { officialEmail: { $regex: rx } },
+      { official_email: { $regex: rx } }
     ]
   };
 };
 
-const pickEmployeePassword = (employee) => {
+const normalizePasswordCandidate = (value) => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") {
+    const s = value.trim();
+    return s ? s : null;
+  }
+  // Some collections store auth as nested object like { hash: "..." }
+  if (typeof value === "object") {
+    const maybe =
+      value.hash ||
+      value.password ||
+      value.passwordHash ||
+      value.hashedPassword ||
+      value.value ||
+      null;
+    if (typeof maybe === "string") {
+      const s = maybe.trim();
+      return s ? s : null;
+    }
+  }
+  const s = String(value).trim();
+  return s ? s : null;
+};
+
+const getEmployeePasswordCandidates = (employee) => {
   if (!employee || typeof employee !== "object") return null;
   const candidates = [
-    employee.password,
-    employee.passwordHash,
-    employee.hashedPassword,
-    employee.userPassword,
-    employee.loginPassword
+    ["password", employee.password],
+    ["Password", employee.Password],
+    ["passwordHash", employee.passwordHash],
+    ["hashedPassword", employee.hashedPassword],
+    ["userPassword", employee.userPassword],
+    ["loginPassword", employee.loginPassword],
+    ["login_password", employee.login_password],
+    ["plainPassword", employee.plainPassword],
+    ["plain_password", employee.plain_password],
+    ["tempPassword", employee.tempPassword],
+    ["temp_password", employee.temp_password],
+    ["pass", employee.pass],
+    ["Pass", employee.Pass],
+    ["passcode", employee.passcode],
+    ["pin", employee.pin]
   ];
 
-  for (const item of candidates) {
-    if (item === undefined || item === null) continue;
-    const s = String(item).trim();
-    if (s) return s;
+  const out = [];
+  for (const [key, value] of candidates) {
+    const normalized = normalizePasswordCandidate(value);
+    if (!normalized) continue;
+    out.push({ key, value: normalized });
   }
 
-  return null;
+  return out.length ? out : null;
 };
 
 const discoverHrmsTenantIds = async ({ client, centralDb }) => {
@@ -882,14 +1030,45 @@ const discoverHrmsTenantIds = async ({ client, centralDb }) => {
     ids.push(s);
   };
 
+  const scanAllDbNames = () => {
+    const flag = String(process.env.HRMS_SCAN_ALL_DBS || "").trim().toLowerCase();
+    if (flag === "1" || flag === "true" || flag === "yes") return true;
+    // Dev-friendly default: scan all DBs when debugging HRMS login
+    return shouldDebugHrmsLogin();
+  };
+
   // 1) Physical tenant DBs (company_<tenantId>)
   try {
     const admin = client.db("admin").admin();
     const dbs = await admin.listDatabases();
+    if (shouldDebugHrmsLogin()) {
+      const names = (dbs.databases || []).map((db) => String(db?.name || "")).filter(Boolean);
+      console.log(`[SSO][HRMS_LOGIN][DEBUG] listDatabases count=${names.length}`);
+      console.log(`[SSO][HRMS_LOGIN][DEBUG] listDatabases sample=${names.slice(0, 20).join(",")}`);
+    }
+
+    const allDbNames = (dbs.databases || [])
+      .map((db) => String(db?.name || "").trim())
+      .filter(Boolean);
+
     for (const db of dbs.databases || []) {
       const name = String(db?.name || "");
       if (name.startsWith("company_")) {
         pushId(name.replace("company_", ""));
+      }
+    }
+
+    // Some HRMS deployments use tenant DBs named like `hrm001`, `nit001`, etc.
+    // When enabled, we also include non-system DB names for scanning as a fallback.
+    if (scanAllDbNames()) {
+      const systemDbs = new Set(["admin", "local", "config"]);
+      for (const dbName of allDbNames) {
+        if (systemDbs.has(dbName)) continue;
+        if (dbName.startsWith("company_")) continue;
+        // Avoid scanning obvious non-HRMS app DBs unless explicitly requested.
+        if (/^GT_PMS_/i.test(dbName)) continue;
+        if (/^GT_TMS_/i.test(dbName)) continue;
+        pushId(dbName);
       }
     }
   } catch (_error) {
@@ -930,6 +1109,9 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
   const centralDb = client.db("hrms");
   const tenantIds = await discoverHrmsTenantIds({ client, centralDb });
   console.log(`[SSO] Employee scan tenantIds=${tenantIds.length} for email=${normalizedEmail}`);
+  if (shouldDebugHrmsLogin()) {
+    console.log(`[SSO][HRMS_LOGIN][DEBUG] tenantIds sample=${tenantIds.slice(0, 20).join(",")}`);
+  }
   const emailMatch = buildEmployeeEmailMatch(normalizedEmail);
   if (!emailMatch) {
     return null;
@@ -999,7 +1181,14 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
   for (const tenantId of tenantIds) {
     if (!tenantId) continue;
 
-    const dbName = `company_${tenantId}`;
+    // tenantId can be:
+    // - a real tenant id used by dbName prefix `company_<tenantId>`
+    // - or a raw dbName itself (e.g. `hrm001`) when HRMS_SCAN_ALL_DBS is enabled
+    const isCompanyPrefixed = !tenantId.startsWith("company_") && mongoose.Types.ObjectId.isValid(tenantId);
+    const dbName = tenantId.startsWith("company_")
+      ? tenantId
+      : (isCompanyPrefixed ? `company_${tenantId}` : tenantId);
+
     const tenantDb = client.db(dbName);
     let employee = null;
 
@@ -1009,15 +1198,27 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
       lastName: 1,
       email: 1,
       Email: 1,
+      emailId: 1,
+      EmailId: 1,
+      emailID: 1,
+      userEmail: 1,
+      user_email: 1,
       workEmail: 1,
       personalEmail: 1,
       officialEmail: 1,
+      official_email: 1,
       role: 1,
       password: 1,
+      Password: 1,
       passwordHash: 1,
       hashedPassword: 1,
       userPassword: 1,
-      loginPassword: 1
+      loginPassword: 1,
+      login_password: 1,
+      pass: 1,
+      Pass: 1,
+      passcode: 1,
+      pin: 1
     };
 
     const candidateCollections = ["employees", "Employees", "users", "Users"];
@@ -1028,6 +1229,28 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
         const doc = await tenantDb.collection(collName).findOne(emailMatch, { projection });
         if (doc) {
           employee = doc;
+          if (shouldDebugHrmsLogin()) {
+            const resolvedEmail =
+              String(
+                doc.email ||
+                  doc.Email ||
+                  doc.emailId ||
+                  doc.EmailId ||
+                  doc.emailID ||
+                  doc.userEmail ||
+                  doc.user_email ||
+                  doc.workEmail ||
+                  doc.personalEmail ||
+                  doc.officialEmail ||
+                  doc.official_email ||
+                  ""
+              )
+                .trim()
+                .toLowerCase() || normalizedEmail;
+            console.log(
+              `[SSO][HRMS_LOGIN][DEBUG] Found employee in ${dbName}.${collName} _id=${String(doc._id)} email=${resolvedEmail}`
+            );
+          }
           break;
         }
       }
@@ -1036,19 +1259,69 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
       continue;
     }
 
-    const storedPassword = pickEmployeePassword(employee);
-    if (!employee || !storedPassword) {
+    const pickedList = getEmployeePasswordCandidates(employee);
+    if (!employee || !pickedList?.length) {
+      if (shouldDebugHrmsLogin() && employee) {
+        console.log(`[SSO][HRMS_LOGIN][DEBUG] Employee found but no password field present in ${dbName}`);
+      }
+      if (employee && allowEmployeeOtpFallback()) {
+        console.warn(`[SSO][HRMS_LOGIN] Allowing OTP fallback (no password field) db=${dbName} email=${normalizedEmail}`);
+        const effectiveTenantId = dbName.startsWith("company_") ? dbName.replace("company_", "") : tenantId;
+        const resolved = await tryResolveVirtualUser({ employee, tenantId: effectiveTenantId });
+        if (resolved?.user) {
+          resolved.user._passwordVerified = false;
+        }
+        return resolved;
+      }
       continue;
     }
 
-    const isPasswordValid = await verifyEmployeePassword(normalizedPassword, storedPassword);
+    if (shouldDebugHrmsLogin()) {
+      const keys = pickedList.map((c) => c.key).join(",");
+      console.log(`[SSO][HRMS_LOGIN][DEBUG] Password candidate keys=${keys} tenantDb=${dbName}`);
+    }
+
+    let isPasswordValid = false;
+    let matchedKey = null;
+    for (const picked of pickedList) {
+      if (shouldDebugHrmsLogin()) {
+        const looksLikeBcrypt = /^\$2[aby]\$\d{2}\$/.test(String(picked.value || ""));
+        console.log(
+          `[SSO][HRMS_LOGIN][DEBUG] Trying password key=${picked.key} looksLikeBcrypt=${looksLikeBcrypt} length=${String(picked.value || "").length} tenantDb=${dbName}`
+        );
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await verifyEmployeePassword(normalizedPassword, picked.value);
+      if (ok) {
+        isPasswordValid = true;
+        matchedKey = picked.key;
+        break;
+      }
+    }
+
     if (!isPasswordValid) {
       console.log(`[SSO] Password mismatch in ${dbName}`);
+      if (allowEmployeeOtpFallback()) {
+        console.warn(`[SSO][HRMS_LOGIN] Allowing OTP fallback (password mismatch) db=${dbName} email=${normalizedEmail}`);
+        logAuth("employee_password_mismatch_otp_fallback", {
+          email: normalizedEmail,
+          dbName
+        });
+        const effectiveTenantId = dbName.startsWith("company_") ? dbName.replace("company_", "") : tenantId;
+        const resolved = await tryResolveVirtualUser({ employee, tenantId: effectiveTenantId });
+        if (resolved?.user) {
+          resolved.user._passwordVerified = false;
+        }
+        return resolved;
+      }
       continue;
     }
 
-    console.log(`[SSO] Password verified successfully in ${dbName}`);
-    return tryResolveVirtualUser({ employee, tenantId });
+    console.log(`[SSO] Password verified successfully in ${dbName}${matchedKey ? ` (key=${matchedKey})` : ""}`);
+    // Preserve original tenant context for downstream JWT claims.
+    // If dbName is `company_<id>`, keep tenantId as suffix; otherwise keep raw dbName.
+    const effectiveTenantId = dbName.startsWith("company_") ? dbName.replace("company_", "") : tenantId;
+    return tryResolveVirtualUser({ employee, tenantId: effectiveTenantId });
   }
 
   // 3) Some deployments keep employees in the central `hrms` DB (non-tenant DB)
@@ -1063,29 +1336,68 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
           lastName: 1,
           email: 1,
           Email: 1,
+          emailId: 1,
+          EmailId: 1,
+          emailID: 1,
+          userEmail: 1,
+          user_email: 1,
           workEmail: 1,
           personalEmail: 1,
           officialEmail: 1,
+          official_email: 1,
           role: 1,
           password: 1,
+          Password: 1,
           passwordHash: 1,
           hashedPassword: 1,
           userPassword: 1,
           loginPassword: 1,
+          login_password: 1,
+          pass: 1,
+          Pass: 1,
+          passcode: 1,
+          pin: 1,
           tenantId: 1,
           companyId: 1,
           company_id: 1
         }
       });
 
-      const storedPassword = pickEmployeePassword(doc);
-      if (!doc || !storedPassword) {
+      const pickedList = getEmployeePasswordCandidates(doc);
+      if (!doc || !pickedList?.length) {
+        if (doc && allowEmployeeOtpFallback()) {
+          const inferredTenantId = String(doc.tenantId || doc.companyId || doc.company_id || "").trim();
+          const tenantId = inferredTenantId || "central";
+          console.warn(`[SSO][HRMS_LOGIN] Allowing OTP fallback (central no password field) email=${normalizedEmail} tenantId=${tenantId}`);
+          const resolved = await tryResolveVirtualUser({ employee: doc, tenantId });
+          if (resolved?.user) {
+            resolved.user._passwordVerified = false;
+          }
+          return resolved;
+        }
         continue;
       }
 
-      // eslint-disable-next-line no-await-in-loop
-      const ok = await verifyEmployeePassword(normalizedPassword, storedPassword);
+      let ok = false;
+      for (const picked of pickedList) {
+        // eslint-disable-next-line no-await-in-loop
+        const one = await verifyEmployeePassword(normalizedPassword, picked.value);
+        if (one) {
+          ok = true;
+          break;
+        }
+      }
       if (!ok) {
+        if (allowEmployeeOtpFallback()) {
+          const inferredTenantId = String(doc.tenantId || doc.companyId || doc.company_id || "").trim();
+          const tenantId = inferredTenantId || "central";
+          console.warn(`[SSO][HRMS_LOGIN] Allowing OTP fallback (central password mismatch) email=${normalizedEmail} tenantId=${tenantId}`);
+          const resolved = await tryResolveVirtualUser({ employee: doc, tenantId });
+          if (resolved?.user) {
+            resolved.user._passwordVerified = false;
+          }
+          return resolved;
+        }
         continue;
       }
 
@@ -1413,6 +1725,92 @@ export const revokeSessionToken = (token) => {
   } catch (_error) {
     // Best effort revocation for logout; ignore malformed tokens.
   }
+};
+
+const ACCESS_TOKEN_TTL = String(process.env.ACCESS_TOKEN_TTL || "15m");
+const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14);
+
+export const getRefreshCookieOptions = (host) => {
+  const base = getCookieOptions(host);
+  return {
+    ...base,
+    httpOnly: true,
+    sameSite: base.sameSite || "lax",
+    secure: base.secure,
+    path: "/api/auth/refresh"
+  };
+};
+
+export const buildRefreshToken = ({ userId, sessionJti, expiresInDays = REFRESH_TOKEN_TTL_DAYS }) => {
+  const jti = sessionJti || crypto.randomUUID();
+  const token = jwt.sign(
+    { sub: String(userId), typ: "refresh" },
+    getJwtSecret(),
+    {
+      algorithm: JWT_ALGORITHMS[0] || "HS256",
+      expiresIn: `${expiresInDays}d`,
+      issuer: ISSUER,
+      audience: ["sso-refresh"],
+      jwtid: jti
+    }
+  );
+  const decoded = jwt.decode(token);
+  const expiresAt = decoded?.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + expiresInDays * 86400000);
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  return { token, jti, tokenHash, expiresAt };
+};
+
+export const persistRefreshSession = async ({ userId, jti, tokenHash, expiresAt, req }) => {
+  const headers = req?.headers || {};
+  await RefreshToken.create({
+    userId,
+    tokenHash,
+    jti,
+    expiresAt,
+    createdByIp: String(req?.ip || headers["x-forwarded-for"] || "").trim() || null,
+    userAgent: String(headers["user-agent"] || "").trim() || null
+  });
+};
+
+export const revokeRefreshSession = async (jti) => {
+  if (!jti) return;
+  await RefreshToken.updateOne({ jti }, { $set: { revokedAt: new Date() } });
+};
+
+export const verifyRefreshJwt = (token) => {
+  const decoded = jwt.verify(token, getJwtSecret(), {
+    algorithms: JWT_ALGORITHMS,
+    issuer: ISSUER,
+    audience: "sso-refresh"
+  });
+  if (decoded?.typ !== "refresh") {
+    const error = new Error("invalid_refresh_token");
+    error.code = "invalid_refresh_token";
+    throw error;
+  }
+  return decoded;
+};
+
+export const rotateRefreshToken = async ({ refreshToken }) => {
+  const decoded = verifyRefreshJwt(refreshToken);
+  const jti = decoded.jti;
+  const session = await RefreshToken.findOne({ jti }).lean();
+  if (!session || session.revokedAt) {
+    const error = new Error("refresh_revoked");
+    error.code = "refresh_revoked";
+    throw error;
+  }
+  if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
+    const error = new Error("refresh_expired");
+    error.code = "refresh_expired";
+    throw error;
+  }
+
+  // revoke old session and create new one
+  await revokeRefreshSession(jti);
+  const next = buildRefreshToken({ userId: decoded.sub });
+  await persistRefreshSession({ userId: decoded.sub, jti: next.jti, tokenHash: next.tokenHash, expiresAt: next.expiresAt, req: null });
+  return { userId: decoded.sub, refresh: next };
 };
 
 export const resolveAppContextForUser = async ({ user, app }) => {

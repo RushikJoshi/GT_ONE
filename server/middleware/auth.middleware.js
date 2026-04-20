@@ -2,11 +2,15 @@ import { ROLES } from "../constants/roles.js";
 import { verifyJwtWithContract } from "../services/auth.service.js";
 
 /**
- * @desc    Middleware to verify sso_token cookie
+ * @desc    Middleware to verify access token (Authorization Bearer or sso_token cookie)
  */
 export const protect = async (req, res, next) => {
   try {
-    const token = req.cookies?.sso_token;
+    const bearer = String(req.headers.authorization || "").trim();
+    const token =
+      bearer.toLowerCase().startsWith("bearer ")
+        ? bearer.slice("bearer ".length).trim()
+        : req.cookies?.sso_token;
     console.log(`[AUTH] Checking token. Found: ${!!token}`);
 
     if (!token) {
@@ -34,7 +38,11 @@ export const protect = async (req, res, next) => {
  */
 export const optionalProtect = async (req, _res, next) => {
   try {
-    const token = req.cookies?.sso_token;
+    const bearer = String(req.headers.authorization || "").trim();
+    const token =
+      bearer.toLowerCase().startsWith("bearer ")
+        ? bearer.slice("bearer ".length).trim()
+        : req.cookies?.sso_token;
 
     if (!token) {
       req.user = null;
