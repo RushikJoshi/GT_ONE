@@ -19,8 +19,6 @@ const hasGmailConfig = () =>
 const allowJsonPreviewTransport = () =>
   !isProduction() && isTruthy(process.env.ALLOW_DEV_JSON_EMAIL);
 
-// Local/dev convenience: when using json transport (no real email), return OTP in API response
-// unless explicitly disabled. In production this is always disabled.
 const allowDevOtpPreview = () => {
   if (isProduction()) return false;
   const configured = String(process.env.ALLOW_DEV_OTP_IN_RESPONSE || "").trim().toLowerCase();
