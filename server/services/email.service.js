@@ -195,7 +195,9 @@ export const sendLoginOtpEmail = async ({ to, otp, expiresInMinutes }) => {
     return {
       info,
       deliveryMode: descriptor.type,
-      previewOtp: descriptor.type === "json" && allowDevOtpPreview() ? otp : null
+      // In non-production, allow returning the OTP for debugging/dev UX when enabled.
+      // This helps when SMTP delivery is slow or unreliable during local testing.
+      previewOtp: allowDevOtpPreview() ? otp : null
     };
   } catch (error) {
     throw createMailError({

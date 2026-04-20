@@ -1,5 +1,5 @@
 import express from "express";
-import { getMe, login, logout, verifyOtp } from "../controllers/auth.controller.js";
+import { getMe, login, logout, refresh, verifyOtp } from "../controllers/auth.controller.js";
 import { optionalProtect } from "../middleware/auth.middleware.js";
 import { createRateLimiter } from "../middleware/rateLimit.middleware.js";
 
@@ -30,6 +30,7 @@ const otpVerificationLimiter = createRateLimiter({
 
 router.post("/login", loginOtpRequestLimiter, login);
 router.post("/verify-otp", otpVerificationLimiter, verifyOtp);
+router.post("/refresh", refresh);
 router.get("/me", optionalProtect, getMe);
 router.get("/sso/me", optionalProtect, getMe);
 router.post("/logout", logout);
