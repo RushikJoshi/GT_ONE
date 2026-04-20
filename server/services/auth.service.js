@@ -811,6 +811,296 @@ const getHrmsAuthBaseUrl = () => {
 
 const isEmailLike = (value) => String(value || "").includes("@");
 
+const allowPlaintextEmployeePassword = () => {
+  if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
+    return String(process.env.ALLOW_PLAINTEXT_EMPLOYEE_PASSWORD || "").trim().toLowerCase() === "true";
+  }
+  return String(process.env.ALLOW_PLAINTEXT_EMPLOYEE_PASSWORD || "true").trim().toLowerCase() !== "false";
+};
+
+const verifyEmployeePassword = async (plain, stored) => {
+  const candidate = String(plain || "");
+  const hashOrPlain = String(stored || "");
+  if (!candidate || !hashOrPlain) return false;
+
+  const looksLikeBcrypt = /^\$2[aby]\$\d{2}\$/.test(hashOrPlain);
+  if (looksLikeBcrypt) {
+    return bcrypt.compare(candidate, hashOrPlain);
+  }
+
+  // Legacy/dev: stored password is plaintext
+  if (allowPlaintextEmployeePassword()) {
+    return candidate === hashOrPlain;
+  }
+
+  return false;
+};
+
+const escapeRegex = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildEmployeeEmailMatch = (normalizedEmail) => {
+  const safe = escapeRegex(String(normalizedEmail || "").trim().toLowerCase());
+  if (!safe) return null;
+
+  const rx = new RegExp(`^${safe}$`, "i");
+  return {
+    $or: [
+      { email: { $regex: rx } },
+      { Email: { $regex: rx } },
+      { workEmail: { $regex: rx } },
+      { personalEmail: { $regex: rx } },
+      { officialEmail: { $regex: rx } }
+    ]
+  };
+};
+
+const pickEmployeePassword = (employee) => {
+  if (!employee || typeof employee !== "object") return null;
+  const candidates = [
+    employee.password,
+    employee.passwordHash,
+    employee.hashedPassword,
+    employee.userPassword,
+    employee.loginPassword
+  ];
+
+  for (const item of candidates) {
+    if (item === undefined || item === null) continue;
+    const s = String(item).trim();
+    if (s) return s;
+  }
+
+  return null;
+};
+
+const discoverHrmsTenantIds = async ({ client, centralDb }) => {
+  const ids = [];
+
+  const pushId = (value) => {
+    const s = String(value || "").trim();
+    if (!s) return;
+    ids.push(s);
+  };
+
+  // 1) Physical tenant DBs (company_<tenantId>)
+  try {
+    const admin = client.db("admin").admin();
+    const dbs = await admin.listDatabases();
+    for (const db of dbs.databases || []) {
+      const name = String(db?.name || "");
+      if (name.startsWith("company_")) {
+        pushId(name.replace("company_", ""));
+      }
+    }
+  } catch (_error) {
+    // ignore; handled below
+  }
+
+  // 2) Central HRMS registry (shape varies by deployment)
+  try {
+    const tenants = await centralDb
+      .collection("tenants")
+      .find({})
+      .project({ _id: 1, tenantId: 1, externalCompanyId: 1, companyId: 1 })
+      .toArray();
+    for (const t of tenants || []) {
+      pushId(t?._id);
+      pushId(t?.tenantId);
+      pushId(t?.externalCompanyId);
+      pushId(t?.companyId);
+    }
+  } catch (_error) {
+    // ignore
+  }
+
+  // De-dupe while keeping stable order
+  const seen = new Set();
+  const unique = [];
+  for (const id of ids) {
+    const key = String(id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(key);
+  }
+
+  return unique;
+};
+
+const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normalizedPassword }) => {
+  const centralDb = client.db("hrms");
+  const tenantIds = await discoverHrmsTenantIds({ client, centralDb });
+  console.log(`[SSO] Employee scan tenantIds=${tenantIds.length} for email=${normalizedEmail}`);
+  const emailMatch = buildEmployeeEmailMatch(normalizedEmail);
+  if (!emailMatch) {
+    return null;
+  }
+
+  const tryResolveVirtualUser = async ({ employee, tenantId }) => {
+    const docCompanyId = String(employee.companyId || employee.company_id || "").trim();
+    let companyId = docCompanyId || String(tenantId || "").trim();
+
+    const tenantObjectId = tenantId && tenantId !== "central" ? toObjectIdIfValid(tenantId) : null;
+    if (tenantObjectId) {
+      try {
+        const tenantRegistry = await centralDb.collection("tenants").findOne({
+          _id: tenantObjectId
+        });
+        if (tenantRegistry) {
+          companyId = String(
+            tenantRegistry.externalCompanyId || tenantRegistry.companyId || tenantRegistry._id || companyId || tenantId
+          ).trim();
+        }
+      } catch (_regErr) {
+        // ignore registry lookup error
+      }
+    }
+
+    const resolvedEmail =
+      String(
+        employee.email ||
+          employee.Email ||
+          employee.workEmail ||
+          employee.personalEmail ||
+          employee.officialEmail ||
+          ""
+      )
+        .trim()
+        .toLowerCase() || normalizedEmail;
+
+    const firstName = String(employee.firstName || "").trim();
+    const lastName = String(employee.lastName || "").trim();
+    const fullName = [firstName, lastName].filter(Boolean).join(" ") || resolvedEmail.split("@")[0];
+    const empRole = String(employee.role || "employee").toLowerCase().trim();
+
+    const virtualUser = {
+      _id: employee._id,
+      id: String(employee._id),
+      name: fullName,
+      email: resolvedEmail,
+      role: empRole,
+      companyId: toObjectIdIfValid(companyId),
+      tenantId: tenantObjectId || toObjectIdIfValid(employee.tenantId),
+      permissions: [],
+      _source: "hrms_employee",
+      _tenantId: tenantId && tenantId !== "central" ? String(tenantId) : String(employee.tenantId || "").trim() || null,
+      _companyId: companyId
+    };
+
+    logAuth("credentials_validated", {
+      email: normalizedEmail,
+      role: empRole,
+      source: "hrms_employee",
+      tenantId
+    });
+
+    return { user: virtualUser };
+  };
+
+  for (const tenantId of tenantIds) {
+    if (!tenantId) continue;
+
+    const dbName = `company_${tenantId}`;
+    const tenantDb = client.db(dbName);
+    let employee = null;
+
+    const projection = {
+      _id: 1,
+      firstName: 1,
+      lastName: 1,
+      email: 1,
+      Email: 1,
+      workEmail: 1,
+      personalEmail: 1,
+      officialEmail: 1,
+      role: 1,
+      password: 1,
+      passwordHash: 1,
+      hashedPassword: 1,
+      userPassword: 1,
+      loginPassword: 1
+    };
+
+    const candidateCollections = ["employees", "Employees", "users", "Users"];
+
+    try {
+      for (const collName of candidateCollections) {
+        // eslint-disable-next-line no-await-in-loop
+        const doc = await tenantDb.collection(collName).findOne(emailMatch, { projection });
+        if (doc) {
+          employee = doc;
+          break;
+        }
+      }
+    } catch (e) {
+      console.error(`[SSO] Failed to query ${dbName}: ${e.message}`);
+      continue;
+    }
+
+    const storedPassword = pickEmployeePassword(employee);
+    if (!employee || !storedPassword) {
+      continue;
+    }
+
+    const isPasswordValid = await verifyEmployeePassword(normalizedPassword, storedPassword);
+    if (!isPasswordValid) {
+      console.log(`[SSO] Password mismatch in ${dbName}`);
+      continue;
+    }
+
+    console.log(`[SSO] Password verified successfully in ${dbName}`);
+    return tryResolveVirtualUser({ employee, tenantId });
+  }
+
+  // 3) Some deployments keep employees in the central `hrms` DB (non-tenant DB)
+  try {
+    const centralCollections = ["employees", "Employees", "users", "Users"];
+    for (const collName of centralCollections) {
+      // eslint-disable-next-line no-await-in-loop
+      const doc = await centralDb.collection(collName).findOne(emailMatch, {
+        projection: {
+          _id: 1,
+          firstName: 1,
+          lastName: 1,
+          email: 1,
+          Email: 1,
+          workEmail: 1,
+          personalEmail: 1,
+          officialEmail: 1,
+          role: 1,
+          password: 1,
+          passwordHash: 1,
+          hashedPassword: 1,
+          userPassword: 1,
+          loginPassword: 1,
+          tenantId: 1,
+          companyId: 1,
+          company_id: 1
+        }
+      });
+
+      const storedPassword = pickEmployeePassword(doc);
+      if (!doc || !storedPassword) {
+        continue;
+      }
+
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await verifyEmployeePassword(normalizedPassword, storedPassword);
+      if (!ok) {
+        continue;
+      }
+
+      const inferredTenantId = String(doc.tenantId || doc.companyId || doc.company_id || "").trim();
+      const tenantId = inferredTenantId || "central";
+      console.log(`[SSO] Password verified successfully in hrms.${collName} (tenantId=${tenantId})`);
+      return tryResolveVirtualUser({ employee: doc, tenantId });
+    }
+  } catch (e) {
+    console.error(`[SSO] Central HRMS employee lookup failed: ${e.message}`);
+  }
+
+  return null;
+};
+
 export const validateLogin = async ({ identifier, password }) => {
   const normalizedEmail = String(identifier || "").trim().toLowerCase();
   const normalizedPassword = String(password || "");
@@ -831,7 +1121,8 @@ export const validateLogin = async ({ identifier, password }) => {
       });
       return { user: ssoUser };
     }
-    // If password failed here, we fall through to check specific tenant databases below
+    // Same email may exist as HRMS tenant employee with a different password than the SSO User row.
+    // Always continue to tenant DB fallback on SSO password mismatch (do not stop here).
     logAuth("sso_password_mismatch_trying_fallback", { email: normalizedEmail });
   }
 
@@ -844,87 +1135,13 @@ export const validateLogin = async ({ identifier, password }) => {
       return { error: { status: 500, message: "Database connection initializing. Please try again in a moment." } };
     }
 
-    const centralDb = client.db("hrms");
-
-    // Get list of tenant IDs to check
-    let tenantIds = [];
-    try {
-      console.log("[SSO] Discovering tenant databases...");
-      const admin = client.db("admin").admin();
-      const dbs = await admin.listDatabases();
-      tenantIds = dbs.databases
-        .map(db => db.name)
-        .filter(name => name.startsWith("company_"))
-        .map(name => name.replace("company_", ""));
-      console.log(`[SSO] Found ${tenantIds.length} physical tenant databases`);
-    } catch (adminErr) {
-      console.warn("[SSO] listDatabases permission denied, falling back to tenants collection");
-      const tenants = await centralDb.collection("tenants").find({}).toArray();
-      tenantIds = tenants.map(t => String(t._id));
-      console.log(`[SSO] Found ${tenantIds.length} tenants via central registry`);
-    }
-
-    for (const tenantId of tenantIds) {
-      const dbName = `company_${tenantId}`;
-      console.log(`[SSO] Checking database: ${dbName}`);
-      const tenantDb = client.db(dbName);
-      let employee;
-      try {
-        employee = await tenantDb.collection("employees").findOne({
-          email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }
-        });
-      } catch (e) {
-        console.error(`[SSO] Failed to query ${dbName}: ${e.message}`);
-        continue;
-      }
-
-      if (employee && employee.password) {
-        console.log(`[SSO] User found in ${dbName}, verifying password...`);
-        const isPasswordValid = await bcrypt.compare(normalizedPassword, employee.password);
-        if (!isPasswordValid) {
-          console.log(`[SSO] Password mismatch in ${dbName}`);
-          continue;
-        }
-
-        // Found a match
-        console.log(`[SSO] Password verified successfully in ${dbName}`);
-        let companyId = tenantId;
-        try {
-          const tenantRegistry = await centralDb.collection("tenants").findOne({
-            _id: mongoose.Types.ObjectId.isValid(tenantId) ? new mongoose.Types.ObjectId(tenantId) : tenantId
-          });
-          if (tenantRegistry) {
-            companyId = String(tenantRegistry.externalCompanyId || tenantRegistry.companyId || tenantRegistry._id);
-          }
-        } catch (regErr) { /* ignore registry lookup error */ }
-
-        const firstName = String(employee.firstName || "").trim();
-        const lastName = String(employee.lastName || "").trim();
-        const fullName = [firstName, lastName].filter(Boolean).join(" ") || normalizedEmail.split("@")[0];
-        const empRole = String(employee.role || "employee").toLowerCase().trim();
-
-        const virtualUser = {
-          _id: employee._id,
-          id: String(employee._id),
-          name: fullName,
-          email: String(employee.email || "").toLowerCase().trim(),
-          role: empRole,
-          companyId: mongoose.Types.ObjectId.isValid(companyId) ? new mongoose.Types.ObjectId(companyId) : null,
-          tenantId: mongoose.Types.ObjectId.isValid(tenantId) ? new mongoose.Types.ObjectId(tenantId) : null,
-          permissions: [],
-          _source: "hrms_employee",
-          _tenantId: tenantId,
-          _companyId: companyId,
-        };
-
-        logAuth("credentials_validated", {
-          email: normalizedEmail,
-          role: empRole,
-          source: "hrms_employee",
-          tenantId
-        });
-        return { user: virtualUser };
-      }
+    const match = await findHrmsEmployeeAcrossTenants({
+      client,
+      normalizedEmail,
+      normalizedPassword
+    });
+    if (match?.user) {
+      return match;
     }
 
     console.log(`[SSO] No match found in any database for ${normalizedEmail}`);
