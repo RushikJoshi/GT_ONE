@@ -362,11 +362,24 @@ const findHrmsEmployeeOtpRecord = async ({ email, requestId, tenantId }) => {
             loginOtp: 1
           }
         }
+<<<<<<< Updated upstream
       );
 
       if (!employeeDoc || !employeeDoc.loginOtp) {
         continue;
       }
+=======
+      }
+    );
+
+    if (!employeeDoc?.loginOtp) {
+      continue;
+    }
+
+    if (String(employeeDoc.loginOtp.requestId || "").trim() !== normalizedRequestId) {
+      continue;
+    }
+>>>>>>> Stashed changes
 
       if (String(employeeDoc.loginOtp.requestId || "").trim() !== normalizedRequestId) {
         continue;
@@ -378,6 +391,7 @@ const findHrmsEmployeeOtpRecord = async ({ email, requestId, tenantId }) => {
       });
     }
   }
+}
 
   return null;
 };
