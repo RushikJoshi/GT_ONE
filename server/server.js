@@ -42,17 +42,16 @@ app.use(helmet({
 const PORT = process.env.PORT || 5004;
 
 // CORS Configuration
-const allowedOrigins = [
-  "https://gaccess.gitakshmi.com",
-  "https://hrms.dev.gitakshmi.com",
-  "https://devprojects.gitakshmi.com"
-];
+const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS 
+  ? process.env.CORS_ALLOWED_ORIGINS.split(',').map(o => o.trim()) 
+  : [];
 
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
       callback(null, true);
     } else {
+      console.warn(`[CORS_BLOCKED] Origin: ${origin}`);
       callback(new Error("Not allowed by CORS"));
     }
   },
@@ -89,8 +88,7 @@ app.use("/api/products", productRoutes);
 
 // Catch-all for SPA
 if (fs.existsSync(clientDistDir)) {
-  app.get("*", (req, res) => {
-    if (req.path.startsWith("/api/")) return res.status(404).json({ error: "API route not found" });
+  app.get(/^(?!\/api\/).*/, (req, res) => {
     res.sendFile(path.join(clientDistDir, "index.html"));
   });
 }

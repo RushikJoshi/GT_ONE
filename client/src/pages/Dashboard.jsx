@@ -69,7 +69,10 @@ function Dashboard() {
     () =>
       (products || [])
         .map((item) => String(item?.name || "").trim())
-        .filter(Boolean),
+        .filter(name => {
+          const upper = name.toUpperCase();
+          return upper !== "PMS" && upper !== "PSA";
+        }),
     [products]
   );
 
@@ -682,7 +685,7 @@ function Dashboard() {
                       width: '32px', height: '32px', background: '#f1f5f9', color: '#1e40af', 
                       borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.8rem'
                     }}>
-                      {company.name[0]}
+                      {(company?.name || "?")[0]}
                     </div>
                     <div style={{ flex: 1, overflow: 'hidden' }}>
                       <h4 style={{ margin: 0, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
@@ -915,7 +918,7 @@ function Dashboard() {
                            color: '#2563eb', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
                            fontWeight: 800, fontSize: '0.95rem' 
                          }}>
-                           {company.name[0]}
+                           {(company?.name || "?")[0]}
                          </div>
                          <div style={{ overflow: 'hidden' }}>
                            <h4 style={{ margin: 0, fontSize: '12px', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
@@ -1233,7 +1236,10 @@ function Dashboard() {
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
                        {products
-                         .filter((p) => String(p?.name || "").trim().toUpperCase() !== "TMS")
+                         .filter((p) => {
+                           const upper = String(p?.name || "").trim().toUpperCase();
+                           return upper !== "PMS" && upper !== "PSA";
+                         })
                          .map((p) => {
                          const isActive = isEditing 
                             ? editProducts.includes(p.name)
@@ -1728,7 +1734,7 @@ function Dashboard() {
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                         <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#eff6ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.1rem' }}>
-                          {company.name.charAt(0).toUpperCase()}
+                          {(company?.name || "?").charAt(0).toUpperCase()}
                         </div>
                         <div style={{ overflow: 'hidden' }}>
                           <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -2229,29 +2235,31 @@ function Dashboard() {
                       />
                     </div>
 
-                    <div>
-                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
-                        STATE
-                      </label>
-                      <input
-                        value={editForm.state}
-                        onChange={(e) => setEditForm((p) => ({ ...p, state: e.target.value }))}
-                        placeholder="State (optional)"
-                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
-                      />
+                    {/* State + Office Address on one line */}
+                    <div style={{ gridColumn: "1 / -1", display: "grid", gridTemplateColumns: "1fr 2fr", gap: "14px", marginTop: "14px" }}>
+                      <div>
+                        <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                          STATE
+                        </label>
+                        <input
+                          value={editForm.state}
+                          onChange={(e) => setEditForm((p) => ({ ...p, state: e.target.value }))}
+                          placeholder="State (optional)"
+                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                          OFFICE ADDRESS
+                        </label>
+                        <input
+                          value={editForm.officeAddress}
+                          onChange={(e) => setEditForm((p) => ({ ...p, officeAddress: e.target.value }))}
+                          placeholder="Office address (optional)"
+                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                        />
+                      </div>
                     </div>
-                  </div>
-
-                  <div style={{ marginTop: "14px" }}>
-                    <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
-                      OFFICE ADDRESS
-                    </label>
-                    <input
-                      value={editForm.officeAddress}
-                      onChange={(e) => setEditForm((p) => ({ ...p, officeAddress: e.target.value }))}
-                      placeholder="Office address (optional)"
-                      style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
-                    />
                   </div>
 
                   <div style={{ marginTop: "10px" }}>
