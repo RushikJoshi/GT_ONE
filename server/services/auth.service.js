@@ -1557,7 +1557,9 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
     if (latestUser._source === "hrms_employee") {
       tenantId = String(latestUser._tenantId || latestUser.tenantId || "");
       companyId = String(latestUser._companyId || latestUser.companyId || "");
-      normalizedCompanyCode = String(latestUser.companyCode || "").trim();
+      normalizedCompanyCode = String(
+        latestUser.companyCode || company?.code || company?.companyCode || ""
+      ).trim();
     } else {
       const tenantContext = await resolveHrmsTenantContext({
         company,
@@ -1703,7 +1705,8 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
         role: roleFromDb,
         products: normalizedProducts,
         companyId: companyId || null,
-        tenantId: tenantId || null
+        tenantId: tenantId || null,
+        companyCode: normalizedCompanyCode || null
       }
     };
   } catch (globalErr) {
