@@ -84,16 +84,6 @@ export const createCompanyWithAdmin = async ({
     return { error: { status: 400, message: "admin password is required" } };
   }
 
-  const existingCompany = await Company.findOne({ email: normalizedCompanyEmail });
-  if (existingCompany) {
-    return { error: { status: 400, message: "Company email already exists" } };
-  }
-
-  const existingAdmin = await User.findOne({ email: normalizedAdminEmail });
-  if (existingAdmin) {
-    return { error: { status: 400, message: "Company admin email already exists" } };
-  }
-
   const selectedProducts = normalizeProductNames(products);
   let productDocs = [];
   
