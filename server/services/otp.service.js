@@ -78,14 +78,20 @@ const buildOtpState = ({ user, requestId, redirect, otpHash, ipAddress, userAgen
   createdAt: new Date()
 });
 
-const getHrmsEmployeeCollection = (tenantId) => {
+const getHrmsEmployeeCollection = (tenantId, collectionName = "employees") => {
   const client = getMongoClient();
   const normalizedTenantId = String(tenantId || "").trim();
   if (!client || !normalizedTenantId) {
     return null;
   }
 
-  return client.db(`company_${normalizedTenantId}`).collection("employees");
+  // If the tenantId already looks like a full DB name (e.g. company_xxx or hrm001), 
+  // try using it directly before falling back to prepending 'company_'.
+  if (normalizedTenantId.startsWith("company_") || /^[a-z0-9]{3,8}\d{3}$/i.test(normalizedTenantId)) {
+    return client.db(normalizedTenantId).collection(collectionName);
+  }
+
+  return client.db(`company_${normalizedTenantId}`).collection(collectionName);
 };
 
 const discoverTenantIds = async () => {
@@ -144,18 +150,26 @@ const persistSsoOtpState = async ({ userId, otpState }) => {
 };
 
 const persistHrmsEmployeeOtpState = async ({ employeeId, tenantId, otpState }) => {
-  const collection = getHrmsEmployeeCollection(tenantId);
-  if (!collection) {
-    throw new Error("Tenant employee collection is unavailable");
+  const candidateCollections = ["employees", "Employees", "users", "Users"];
+  const normalizedTenantId = String(tenantId || "").trim();
+
+  for (const collName of candidateCollections) {
+    const collection = getHrmsEmployeeCollection(normalizedTenantId, collName);
+    if (!collection) continue;
+
+    try {
+      const res = await collection.updateOne({ _id: employeeId }, { $set: { loginOtp: otpState } });
+      if (res && res.matchedCount > 0) {
+        return res;
+      }
+    } catch (_err) {
+      continue;
+    }
   }
 
-  if (otpState) {
-    const res = await collection.updateOne({ _id: employeeId }, { $set: { loginOtp: otpState } });
-    return res;
-  }
-
-  const res = await collection.updateOne({ _id: employeeId }, { $unset: { loginOtp: "" } });
-  return res;
+  // If we couldn't find/update in any collection, return a mock result with matchedCount 0 
+  // to trigger fallback to central record storage in the caller.
+  return { matchedCount: 0 };
 };
 
 const persistHrmsOtpFallbackState = async ({ email, requestId, otpState }) => {
@@ -318,16 +332,18 @@ const findHrmsEmployeeOtpRecord = async ({ email, requestId, tenantId }) => {
   const normalizedEmail = normalizeEmail(email);
   const normalizedRequestId = String(requestId || "").trim();
   const tenantIds = tenantId ? [String(tenantId).trim()] : await discoverTenantIds();
+  const candidateCollections = ["employees", "Employees", "users", "Users"];
 
   for (const currentTenantId of tenantIds) {
     if (!currentTenantId) {
       continue;
     }
 
-    const collection = getHrmsEmployeeCollection(currentTenantId);
-    if (!collection) {
-      continue;
-    }
+    for (const collName of candidateCollections) {
+      const collection = getHrmsEmployeeCollection(currentTenantId, collName);
+      if (!collection) {
+        continue;
+      }
 
     const employeeDoc = await collection.findOne(
       {
@@ -345,12 +361,10 @@ const findHrmsEmployeeOtpRecord = async ({ email, requestId, tenantId }) => {
           role: 1,
           loginOtp: 1
         }
-      }
-    );
 
-    if (!employeeDoc?.loginOtp) {
-      continue;
-    }
+        if (String(employeeDoc.loginOtp.requestId || "").trim() !== normalizedRequestId) {
+          continue;
+        }
 
     return buildHrmsEmployeeAdapter({
       employeeDoc,
@@ -651,7 +665,19 @@ export const verifyLoginOtpChallenge = async ({
     tenantId
   });
 
-  if (!record?.otpState || record.otpState.status !== "pending") {
+  if (!record?.otpState) {
+    console.warn(`[OTP] Record not found for email=${normalizedEmail} requestId=${normalizedRequestId} source=${source} tenantId=${tenantId}`);
+    return {
+      error: {
+        status: 400,
+        reason: "request_invalid",
+        message: "Invalid or expired OTP request"
+      }
+    };
+  }
+
+  if (record.otpState.status !== "pending") {
+    console.warn(`[OTP] Request status is ${record.otpState.status} (expected pending) for email=${normalizedEmail}`);
     return {
       error: {
         status: 400,
