@@ -29,19 +29,9 @@ app.use(helmet({
       imgSrc: ["'self'", "data:", "blob:"],
       connectSrc: [
         "'self'", 
-        "http://localhost:5174", // SSO Client
-        "http://localhost:5176", // HRMS Client
-        "http://localhost:5173", // PMS Client
-        "http://127.0.0.1:5174", // SSO Client (IP)
-        "http://127.0.0.1:5176", // HRMS Client (IP)
-        "http://127.0.0.1:5173", // PMS Client (IP)
-        "http://localhost:5004", // SSO Self
-        "http://127.0.0.1:5004", // SSO Self (IP)
-        "ws://localhost:5174",   // Vite HMR
-        "ws://localhost:5176",   // Vite HMR
-        "ws://127.0.0.1:5174",   // Vite HMR (IP)
-        "ws://127.0.0.1:5176",   // Vite HMR (IP)
-        "ws://127.0.0.1:5173"    // Vite HMR (IP)
+        "https://gaccess.gitakshmi.com",
+        "https://hrms.dev.gitakshmi.com",
+        "https://devprojects.gitakshmi.com"
       ],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: [],
@@ -53,19 +43,14 @@ const PORT = process.env.PORT || 5004;
 
 // CORS Configuration
 const allowedOrigins = [
-  "http://localhost:5173", // PMS
-  "http://localhost:5174", // SSO
-  "http://localhost:5176", // HRMS
-  "http://127.0.0.1:5173", // PMS (IP)
-  "http://127.0.0.1:5174", // SSO (IP)
-  "http://127.0.0.1:5176", // HRMS (IP)
-  "https://sso.gitakshmi.com",
-  "https://hrms.gitakshmi.com"
+  "https://gaccess.gitakshmi.com",
+  "https://hrms.dev.gitakshmi.com",
+  "https://devprojects.gitakshmi.com"
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
       callback(null, true);
     } else {
       callback(new Error("Not allowed by CORS"));
@@ -76,6 +61,19 @@ app.use(cors({
 
 app.use(express.json());
 app.use(cookieParser());
+
+// Static Files & Frontend Build
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const clientDistDir = path.resolve(__dirname, "../client/dist");
+
+if (fs.existsSync(clientDistDir)) {
+  app.use(express.static(clientDistDir));
+}
 
 // Health Check
 app.get("/api/health", (req, res) => {
@@ -89,6 +87,14 @@ app.use("/api/tenants", tenantRoutes);
 app.use("/api/super-admin", superAdminRoutes);
 app.use("/api/products", productRoutes);
 
+// Catch-all for SPA
+if (fs.existsSync(clientDistDir)) {
+  app.get("*", (req, res) => {
+    if (req.path.startsWith("/api/")) return res.status(404).json({ error: "API route not found" });
+    res.sendFile(path.join(clientDistDir, "index.html"));
+  });
+}
+
 // Database Connection
 const connectDB = async () => {
   try {
@@ -97,10 +103,10 @@ const connectDB = async () => {
 
     // Backward-compatible migration: allow duplicate emails in Company/User.
     await dropLegacyUniqueEmailIndexes();
-    
+
     // Seed initial data (Super Admin)
     await seedInitialData();
-    
+
     app.listen(PORT, () => {
       console.log(`[SSO] System running on port ${PORT}`);
     });
