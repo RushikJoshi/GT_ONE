@@ -168,10 +168,6 @@ function Login() {
 
   useEffect(() => {
     if (!hasExplicitRedirectUrl) return;
-
-    if (hasRecentRedirectAttempt(redirect)) {
-      setError("App redirect failed and returned to login. Please try again or contact admin.");
-    }
   }, [hasExplicitRedirectUrl, redirect]);
 
   useEffect(() => {
@@ -191,8 +187,6 @@ function Login() {
           setAccessToken(res.data.accessToken);
         }
 
-        // PSA/Super Admin should always land in GT ONE dashboard.
-        // Otherwise an external redirect (e.g. tenant app) causes a ping-pong loop.
         if (isPsaRole(nextUser?.role)) {
           navigate("/dashboard", { replace: true });
           return;
@@ -251,7 +245,6 @@ function Login() {
       </div>
     );
   }
-
 
   const onChange = (event) => {
     const { name, value } = event.target;
@@ -325,7 +318,6 @@ function Login() {
         res = await api.post(`/auth/login${query}`, payload);
       } catch (e) {
         const status = e?.response?.status;
-        // Dev QoL: auto-unlock local brute-force lockouts once.
         if (status === 429) {
           const joiner = query ? "&" : "?";
           res = await api.post(`/auth/login${query}${joiner}devReset=1`, payload);
@@ -345,11 +337,7 @@ function Login() {
           expiresAt: res.data.expiresAt || null
         });
         setOtpCode("");
-        setNotice(
-          res.data?.devOtpPreview
-            ? `${res.data?.message || "OTP generated."} Preview OTP: ${res.data.devOtpPreview}`
-            : (res.data?.message || "OTP sent to your email.")
-        );
+        setNotice(res.data?.message || "OTP sent to your email.");
         return;
       }
 
@@ -425,11 +413,7 @@ function Login() {
       setOtpCode("");
       setOtpSecondsLeft(nextChallenge.expiresInSeconds);
       setResendSecondsLeft(nextChallenge.expiresInSeconds);
-      setNotice(
-        res.data?.devOtpPreview
-          ? `${res.data?.message || "OTP regenerated."} Preview OTP: ${res.data.devOtpPreview}`
-          : (res.data?.message || "New OTP sent.")
-      );
+      setNotice(res.data?.message || "New OTP sent.");
     } catch (requestError) {
       const retryAfter = Number(requestError?.response?.data?.retryAfterSeconds || 0);
       if (retryAfter > 0) {
