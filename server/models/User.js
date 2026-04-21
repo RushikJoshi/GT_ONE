@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { ROLE_VALUES, ROLES } from "../constants/roles.js";
+import { PRODUCTS } from "../constants/products.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -17,6 +18,15 @@ const userSchema = new mongoose.Schema(
     password: {
       type: String,
       required: true
+    },
+    /**
+     * Primary product context for this user (used for product-locked routing).
+     * Company-level entitlements are still resolved via CompanyProduct.
+     */
+    product: {
+      type: String,
+      enum: PRODUCTS,
+      default: null
     },
     role: {
       type: String,

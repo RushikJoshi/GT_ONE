@@ -2,7 +2,7 @@ import { ROLES } from "../constants/roles.js";
 import { verifyJwtWithContract } from "../services/auth.service.js";
 
 /**
- * @desc    Middleware to verify sso_token cookie
+ * @desc    Middleware to verify access token (Authorization Bearer or sso_token cookie)
  */
 export const protect = async (req, res, next) => {
   try {

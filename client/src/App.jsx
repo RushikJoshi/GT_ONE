@@ -3,19 +3,23 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import Logout from "./pages/Logout";
 import AssignProducts from "./pages/AssignProducts";
+import Unauthorized from "./pages/Unauthorized";
 import { useAuth } from "./context/AuthContext";
+import SessionGuard from "./components/SessionGuard";
 
-const ProtectedRoute = ({ children }) => {
-  const { user, loading } = useAuth();
+const ProtectedRoute = ({ children }) => (
+  <SessionGuard>{children}</SessionGuard>
+);
 
-  if (loading) {
-    return <div className="center-screen">Checking session...</div>;
+const ProductRoute = ({ product, children }) => {
+  const { user, loading, isAuthChecked } = useAuth();
+  if (loading || !isAuthChecked) return <div className="center-screen">Checking session...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+
+  const normalized = String(user?.product || "").trim().toUpperCase();
+  if (normalized && product && normalized !== String(product).toUpperCase()) {
+    return <Navigate to="/unauthorized" replace />;
   }
-
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-
   return children;
 };
 
@@ -73,6 +77,7 @@ function App() {
       />
       <Route path="/login" element={<Login />} />
       <Route path="/logout" element={<Logout />} />
+      <Route path="/unauthorized" element={<Unauthorized />} />
       <Route
         path="/dashboard"
         element={
@@ -80,6 +85,27 @@ function App() {
             <SuperAdminRoute>
               <Dashboard />
             </SuperAdminRoute>
+          </ProtectedRoute>
+        }
+      />
+      {/* Product locked routes (example entry points) */}
+      <Route
+        path="/hrms/*"
+        element={
+          <ProtectedRoute>
+            <ProductRoute product="HRMS">
+              <div className="center-screen">HRMS app shell mounts here.</div>
+            </ProductRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/psa/*"
+        element={
+          <ProtectedRoute>
+            <ProductRoute product="PSA">
+              <div className="center-screen">PSA app shell mounts here.</div>
+            </ProductRoute>
           </ProtectedRoute>
         }
       />

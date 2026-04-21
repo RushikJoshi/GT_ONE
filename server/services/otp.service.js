@@ -37,6 +37,13 @@ const compareHashes = (left, right) => {
 };
 
 const getMongoClient = () => mongoose.connection?.client || null;
+const getSsoDb = () => mongoose.connection?.db || null;
+
+const getHrmsOtpFallbackCollection = () => {
+  const db = getSsoDb();
+  if (!db) return null;
+  return db.collection("hrms_login_otps");
+};
 
 const buildOtpState = ({ user, requestId, redirect, otpHash, ipAddress, userAgent, expiresAt }) => ({
   requestId,
@@ -54,6 +61,20 @@ const buildOtpState = ({ user, requestId, redirect, otpHash, ipAddress, userAgen
   verifiedAt: null,
   invalidatedAt: null,
   lastAttemptAt: null,
+  // Store a minimal snapshot so OTP verification can succeed even when the employee
+  // record lives outside `company_<tenantId>.employees` (e.g. `test.users`).
+  userSnapshot: user
+    ? {
+        _id: String(user._id || user.id || ""),
+        id: String(user._id || user.id || ""),
+        name: String(user.name || "").trim(),
+        email: normalizeEmail(user.email),
+        role: String(user.role || "").trim(),
+        tenantId: user?._tenantId ? String(user._tenantId) : (user?.tenantId ? String(user.tenantId) : null),
+        companyId: user?._companyId ? String(user._companyId) : (user?.companyId ? String(user.companyId) : null),
+        _source: user?._source || "hrms_employee"
+      }
+    : null,
   createdAt: new Date()
 });
 
@@ -129,11 +150,43 @@ const persistHrmsEmployeeOtpState = async ({ employeeId, tenantId, otpState }) =
   }
 
   if (otpState) {
-    await collection.updateOne({ _id: employeeId }, { $set: { loginOtp: otpState } });
+    const res = await collection.updateOne({ _id: employeeId }, { $set: { loginOtp: otpState } });
+    return res;
+  }
+
+  const res = await collection.updateOne({ _id: employeeId }, { $unset: { loginOtp: "" } });
+  return res;
+};
+
+const persistHrmsOtpFallbackState = async ({ email, requestId, otpState }) => {
+  const collection = getHrmsOtpFallbackCollection();
+  if (!collection) {
+    throw new Error("HRMS OTP fallback collection is unavailable");
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !requestId) {
+    throw new Error("email and requestId are required");
+  }
+
+  if (!otpState) {
+    await collection.deleteOne({ email: normalizedEmail, requestId: String(requestId).trim() });
     return;
   }
 
-  await collection.updateOne({ _id: employeeId }, { $unset: { loginOtp: "" } });
+  await collection.updateOne(
+    { email: normalizedEmail, requestId: String(requestId).trim() },
+    {
+      $set: {
+        email: normalizedEmail,
+        requestId: String(requestId).trim(),
+        otpState,
+        updatedAt: new Date()
+      },
+      $setOnInsert: { createdAt: new Date() }
+    },
+    { upsert: true }
+  );
 };
 
 const buildSsoUserAdapter = (userDoc) => ({
@@ -192,6 +245,44 @@ const buildHrmsEmployeeAdapter = ({ employeeDoc, tenantId }) => ({
       tenantId,
       companyId: employeeDoc?.loginOtp?.companyId || (await resolveCompanyIdFromTenant(tenantId))
     })
+});
+
+const buildHrmsOtpFallbackAdapter = ({ email, requestId, otpState }) => ({
+  email: normalizeEmail(email),
+  otpState: otpState || null,
+  persist: async (nextOtpState) =>
+    persistHrmsOtpFallbackState({
+      email,
+      requestId,
+      otpState: nextOtpState
+    }),
+  buildUser: async () => {
+    const snapshot = otpState?.userSnapshot || null;
+    if (snapshot && snapshot.email) {
+      return {
+        _id: snapshot._id,
+        id: snapshot.id,
+        name: snapshot.name,
+        email: snapshot.email,
+        role: String(snapshot.role || "employee").trim().toLowerCase(),
+        permissions: [],
+        _source: "hrms_employee",
+        _tenantId: snapshot.tenantId || null,
+        _companyId: snapshot.companyId || null
+      };
+    }
+    return {
+      _id: requestId,
+      id: String(requestId),
+      name: normalizeEmail(email).split("@")[0],
+      email: normalizeEmail(email),
+      role: "employee",
+      permissions: [],
+      _source: "hrms_employee",
+      _tenantId: null,
+      _companyId: null
+    };
+  }
 });
 
 const findSsoUserOtpRecord = async ({ email, requestId }) => {
@@ -270,6 +361,27 @@ const findHrmsEmployeeOtpRecord = async ({ email, requestId, tenantId }) => {
   return null;
 };
 
+const findHrmsOtpFallbackRecord = async ({ email, requestId }) => {
+  const collection = getHrmsOtpFallbackCollection();
+  if (!collection) return null;
+
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedRequestId = String(requestId || "").trim();
+  if (!normalizedEmail || !normalizedRequestId) return null;
+
+  const doc = await collection.findOne(
+    { email: normalizedEmail, requestId: normalizedRequestId },
+    { projection: { otpState: 1, email: 1, requestId: 1 } }
+  );
+  if (!doc?.otpState) return null;
+
+  return buildHrmsOtpFallbackAdapter({
+    email: normalizedEmail,
+    requestId: normalizedRequestId,
+    otpState: doc.otpState
+  });
+};
+
 const findOtpRecord = async ({ email, requestId, source, tenantId }) => {
   const normalizedSource = normalizeSource(source);
 
@@ -278,7 +390,10 @@ const findOtpRecord = async ({ email, requestId, source, tenantId }) => {
   }
 
   if (normalizedSource === "hrms_employee") {
-    return findHrmsEmployeeOtpRecord({ email, requestId, tenantId });
+    return (
+      (await findHrmsEmployeeOtpRecord({ email, requestId, tenantId })) ||
+      (await findHrmsOtpFallbackRecord({ email, requestId }))
+    );
   }
 
   return (
@@ -315,11 +430,31 @@ export const createLoginOtpChallenge = async ({
   const tenantId = otpState.tenantId || null;
 
   if (authSource === "hrms_employee") {
-    await persistHrmsEmployeeOtpState({
-      employeeId: user._id,
-      tenantId,
-      otpState
-    });
+    // Prefer writing onto tenant employee record when available.
+    // Fallback to central SSO collection for HRMS employees that live outside `company_<tenantId>.employees`
+    // (e.g. `test.users`), so OTP verify can still succeed.
+    try {
+      const writeRes = await persistHrmsEmployeeOtpState({
+        employeeId: user._id,
+        tenantId,
+        otpState
+      });
+      // If the tenant collection exists but the document isn't there, updateOne succeeds with matchedCount=0.
+      // In that case, also persist to fallback collection.
+      if (!writeRes || Number(writeRes.matchedCount || 0) === 0) {
+        await persistHrmsOtpFallbackState({
+          email,
+          requestId,
+          otpState
+        });
+      }
+    } catch (_error) {
+      await persistHrmsOtpFallbackState({
+        email,
+        requestId,
+        otpState
+      });
+    }
   } else {
     await persistSsoOtpState({
       userId: user._id,
@@ -346,11 +481,26 @@ export const createLoginOtpChallenge = async ({
     };
   } catch (error) {
     if (authSource === "hrms_employee") {
-      await persistHrmsEmployeeOtpState({
-        employeeId: user._id,
-        tenantId,
-        otpState: null
-      });
+      try {
+        const writeRes = await persistHrmsEmployeeOtpState({
+          employeeId: user._id,
+          tenantId,
+          otpState: null
+        });
+        if (!writeRes || Number(writeRes.matchedCount || 0) === 0) {
+          await persistHrmsOtpFallbackState({
+            email,
+            requestId,
+            otpState: null
+          });
+        }
+      } catch (_err) {
+        await persistHrmsOtpFallbackState({
+          email,
+          requestId,
+          otpState: null
+        });
+      }
     } else {
       await persistSsoOtpState({
         userId: user._id,

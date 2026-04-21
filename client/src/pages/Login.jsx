@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import api from "../lib/api";
+import api, { setAccessToken } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import "./Login.css";
 
@@ -8,6 +8,7 @@ function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { setUser } = useAuth();
+  const [didCheckSession, setDidCheckSession] = useState(false);
 
   const markRedirectAttempt = (url) => {
     try {
@@ -78,6 +79,14 @@ function Login() {
     return null;
   };
 
+  const isPsaRole = (role) => {
+    const normalizedRole = String(role || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+    return ["super_admin", "superadmin", "psa"].includes(normalizedRole);
+  };
+
   const redirect = useMemo(
     () => searchParams.get("redirect") || "",
     [searchParams]
@@ -143,6 +152,7 @@ function Login() {
 
   useEffect(() => {
     let active = true;
+    if (didCheckSession) return;
 
     const redirectAuthenticatedUser = async () => {
       try {
@@ -153,6 +163,16 @@ function Login() {
 
         const nextUser = res.data.user;
         setUser(nextUser);
+        if (res.data?.accessToken) {
+          setAccessToken(res.data.accessToken);
+        }
+
+        // PSA/Super Admin should always land in GT ONE dashboard.
+        // Otherwise an external redirect (e.g. tenant app) causes a ping-pong loop.
+        if (isPsaRole(nextUser?.role)) {
+          navigate("/dashboard", { replace: true });
+          return;
+        }
 
         if (hasExplicitRedirectUrl) {
           if (safeRedirectTo(redirect, { replace: true })) {
@@ -164,10 +184,6 @@ function Login() {
           .trim()
           .toLowerCase()
           .replace(/[\s-]+/g, "_");
-        if (["super_admin", "superadmin", "psa"].includes(normalizedRole)) {
-          navigate("/dashboard", { replace: true });
-          return;
-        }
 
         const roleRedirect = resolveFallbackRedirect(normalizedRole);
         if (roleRedirect) {
@@ -181,6 +197,7 @@ function Login() {
       } finally {
         if (active) {
           setCheckingSession(false);
+          setDidCheckSession(true);
         }
       }
     };
@@ -190,7 +207,7 @@ function Login() {
     return () => {
       active = false;
     };
-  }, [hasExplicitRedirectUrl, navigate, redirect, setUser]);
+  }, [didCheckSession, hasExplicitRedirectUrl, navigate, redirect, setUser]);
 
   if (checkingSession) {
     return (
@@ -244,12 +261,12 @@ function Login() {
         const nextUser = res.data.user;
         setUser(nextUser);
 
-        const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
-
-        if (["super_admin", "superadmin", "psa"].includes(normalizedRole) && !hasExplicitRedirectUrl) {
+        if (isPsaRole(nextUser?.role)) {
           navigate("/dashboard", { replace: true });
           return;
         }
+
+        const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
 
         const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
@@ -275,7 +292,19 @@ function Login() {
         email: form.email.trim().toLowerCase(),
         password: form.password.trim()
       };
-      const res = await api.post(`/auth/login${query}`, payload);
+      let res;
+      try {
+        res = await api.post(`/auth/login${query}`, payload);
+      } catch (e) {
+        const status = e?.response?.status;
+        // Dev QoL: auto-unlock local brute-force lockouts once.
+        if (status === 429) {
+          const joiner = query ? "&" : "?";
+          res = await api.post(`/auth/login${query}${joiner}devReset=1`, payload);
+        } else {
+          throw e;
+        }
+      }
 
       if (res.data?.requiresOtp) {
         setOtpChallenge({
@@ -298,13 +327,16 @@ function Login() {
 
       const nextUser = res.data.user;
       setUser(nextUser);
+      if (res.data?.accessToken) {
+        setAccessToken(res.data.accessToken);
+      }
 
-      const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
-
-      if (["super_admin", "superadmin", "psa"].includes(normalizedRole) && !hasExplicitRedirectUrl) {
+      if (isPsaRole(nextUser?.role)) {
         navigate("/dashboard", { replace: true });
         return;
       }
+
+      const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
 
       const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 

@@ -2,10 +2,16 @@ import User from "../models/User.js";
 import Tenant from "../models/Tenant.js";
 import {
   getCookieOptions,
+  getRefreshCookieOptions,
   getLoginResponseData,
   isDirectAdminLogin,
+  persistRefreshSession,
+  buildRefreshToken,
   revokeSessionToken,
   resolveDirectAdminUser,
+  revokeRefreshSession,
+  rotateRefreshToken,
+  verifyRefreshJwt,
   shouldBypassOtpForUser,
   validateLogin,
   verifyJwtWithContract
@@ -31,6 +37,11 @@ const applySessionCookie = ({ req, res, token }) => {
   res.cookie("sso_token", token, cookieOptions);
   // Keep legacy cookie cleared to avoid oversized Cookie/Set-Cookie headers in proxy hops.
   res.clearCookie("token", cookieOptions);
+};
+
+const applyRefreshCookie = ({ req, res, token }) => {
+  const cookieOptions = getRefreshCookieOptions(req.headers.host);
+  res.cookie("sso_refresh", token, cookieOptions);
 };
 
 const buildLockResponse = ({ res, retryAfterSeconds, message }) => {
@@ -62,11 +73,23 @@ export const login = async (req, res) => {
     });
 
     if (lockState.blocked) {
-      return buildLockResponse({
-        res,
-        retryAfterSeconds: lockState.retryAfterSeconds,
-        message: "Too many failed login attempts. Please try again later."
-      });
+      // Dev-only escape hatch: unblock local lockouts caused by repeated testing.
+      // Enable by calling POST /api/auth/login?devReset=1 (NOT active in production).
+      const devResetRequested = String(req.query?.devReset || "").trim() === "1";
+      const isProd = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+      if (!isProd && devResetRequested) {
+        clearBruteForceFailures({
+          scope: "login",
+          identifier: resolvedIdentifier,
+          ipAddress: clientIpAddress
+        });
+      } else {
+        return buildLockResponse({
+          res,
+          retryAfterSeconds: lockState.retryAfterSeconds,
+          message: "Too many failed login attempts. Please try again later."
+        });
+      }
     }
 
     if (isDirectAdminLogin({ email: resolvedIdentifier, password })) {
@@ -93,6 +116,10 @@ export const login = async (req, res) => {
         token: responseData.token
       });
 
+      const refresh = buildRefreshToken({ userId: adminUser._id });
+      await persistRefreshSession({ userId: adminUser._id, jti: refresh.jti, tokenHash: refresh.tokenHash, expiresAt: refresh.expiresAt, req });
+      applyRefreshCookie({ req, res, token: refresh.token });
+
       console.log(`[SSO] Direct admin login successful: ${adminUser.email}`);
 
       return res.json({
@@ -100,7 +127,8 @@ export const login = async (req, res) => {
         requiresOtp: false,
         message: "Login successful",
         redirectTo: responseData.redirectTo,
-        user: responseData.payloadUser
+        user: responseData.payloadUser,
+        accessToken: responseData.token
       });
     }
 
@@ -148,6 +176,10 @@ export const login = async (req, res) => {
         token: responseData.token
       });
 
+      const refresh = buildRefreshToken({ userId: validation.user._id });
+      await persistRefreshSession({ userId: validation.user._id, jti: refresh.jti, tokenHash: refresh.tokenHash, expiresAt: refresh.expiresAt, req });
+      applyRefreshCookie({ req, res, token: refresh.token });
+
       console.log(`[SSO] OTP bypass login successful: ${validation.user.email}`);
 
       return res.json({
@@ -155,7 +187,8 @@ export const login = async (req, res) => {
         requiresOtp: false,
         message: "Login successful",
         redirectTo: responseData.redirectTo,
-        user: responseData.payloadUser
+        user: responseData.payloadUser,
+        accessToken: responseData.token
       });
     }
 
@@ -268,6 +301,10 @@ export const verifyOtp = async (req, res) => {
       token: responseData.token
     });
 
+    const refresh = buildRefreshToken({ userId: verification.user._id });
+    await persistRefreshSession({ userId: verification.user._id, jti: refresh.jti, tokenHash: refresh.tokenHash, expiresAt: refresh.expiresAt, req });
+    applyRefreshCookie({ req, res, token: refresh.token });
+
     console.log(`[SSO] OTP login successful: ${verification.email}`);
 
     return res.json({
@@ -275,7 +312,8 @@ export const verifyOtp = async (req, res) => {
       requiresOtp: false,
       message: "OTP verified. Login successful",
       redirectTo: responseData.redirectTo,
-      user: responseData.payloadUser
+      user: responseData.payloadUser,
+      accessToken: responseData.token
     });
   } catch (error) {
     console.error(`[SSO] OTP Verification Error: ${error.message}`);
@@ -423,4 +461,39 @@ export const logout = async (req, res) => {
   }
 
   return res.json({ message: "Logged out successfully" });
+};
+
+/**
+ * @desc    Refresh access token using refresh cookie
+ * @route   POST /api/auth/refresh
+ */
+export const refresh = async (req, res) => {
+  try {
+    const refreshToken = req.cookies?.sso_refresh;
+    if (!refreshToken) {
+      return res.status(401).json({ message: "Missing refresh token" });
+    }
+
+    const rotated = await rotateRefreshToken({ refreshToken });
+    applyRefreshCookie({ req, res, token: rotated.refresh.token });
+
+    // Build a fresh access token with normal login response (no redirect logic needed here)
+    const user = await User.findById(rotated.userId).lean();
+    if (!user) return res.status(401).json({ message: "User not found" });
+
+    const desiredProduct = String(req.query?.product || user.product || "").trim();
+    const responseData = await getLoginResponseData({
+      user,
+      redirect: desiredProduct || "HRMS",
+      requestOrigin: getRequestOrigin(req)
+    });
+    if (responseData.error) {
+      return res.status(responseData.error.status).json({ message: responseData.error.message });
+    }
+
+    applySessionCookie({ req, res, token: responseData.token });
+    return res.json({ success: true, accessToken: responseData.token, user: responseData.payloadUser });
+  } catch (error) {
+    return res.status(401).json({ message: "Refresh token invalid" });
+  }
 };

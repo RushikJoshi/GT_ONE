@@ -19,8 +19,6 @@ const hasGmailConfig = () =>
 const allowJsonPreviewTransport = () =>
   !isProduction() && isTruthy(process.env.ALLOW_DEV_JSON_EMAIL);
 
-// Local/dev convenience: when using json transport (no real email), return OTP in API response
-// unless explicitly disabled. In production this is always disabled.
 const allowDevOtpPreview = () => {
   if (isProduction()) return false;
   const configured = String(process.env.ALLOW_DEV_OTP_IN_RESPONSE || "").trim().toLowerCase();
@@ -197,7 +195,9 @@ export const sendLoginOtpEmail = async ({ to, otp, expiresInMinutes }) => {
     return {
       info,
       deliveryMode: descriptor.type,
-      previewOtp: descriptor.type === "json" && allowDevOtpPreview() ? otp : null
+      // In non-production, allow returning the OTP for debugging/dev UX when enabled.
+      // This helps when SMTP delivery is slow or unreliable during local testing.
+      previewOtp: allowDevOtpPreview() ? otp : null
     };
   } catch (error) {
     throw createMailError({

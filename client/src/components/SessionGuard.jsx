@@ -7,10 +7,10 @@ import { Navigate, useLocation } from "react-router-dom";
  * If not authenticated, redirects to /login.
  */
 const SessionGuard = ({ children }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, isAuthChecked } = useAuth();
   const location = useLocation();
 
-  if (loading) {
+  if (loading || !isAuthChecked) {
     return <div style={{ padding: "100px", textAlign: "center" }}><h3>Loading SSO Session...</h3></div>;
   }
 
