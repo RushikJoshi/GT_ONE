@@ -1,21 +1,21 @@
 import mongoose from "mongoose";
 
-const dropUniqueEmailIndexIfExists = async (collectionName) => {
+const dropLegacyUniqueIndexesIfExists = async (collectionName, fieldNames = []) => {
   try {
     const collection = mongoose.connection.collection(collectionName);
     const indexes = await collection.indexes();
-    const uniqueEmailIndexes = indexes.filter(
+    const uniqueLegacyIndexes = indexes.filter(
       (index) =>
         index &&
         index.unique === true &&
         index.key &&
-        Object.prototype.hasOwnProperty.call(index.key, "email")
+        fieldNames.some((fieldName) => Object.prototype.hasOwnProperty.call(index.key, fieldName))
     );
 
-    for (const index of uniqueEmailIndexes) {
+    for (const index of uniqueLegacyIndexes) {
       if (!index.name) continue;
       await collection.dropIndex(index.name);
-      console.log(`[MIGRATION] Dropped unique email index ${collectionName}.${index.name}`);
+      console.log(`[MIGRATION] Dropped legacy unique index ${collectionName}.${index.name}`);
     }
   } catch (error) {
     // NamespaceNotFound or missing collection should not block boot.
@@ -25,6 +25,6 @@ const dropUniqueEmailIndexIfExists = async (collectionName) => {
 };
 
 export const dropLegacyUniqueEmailIndexes = async () => {
-  await dropUniqueEmailIndexIfExists("companies");
-  await dropUniqueEmailIndexIfExists("users");
+  await dropLegacyUniqueIndexesIfExists("companies", ["email", "companyEmail", "tenantId", "apiKey"]);
+  await dropLegacyUniqueIndexesIfExists("users", ["email"]);
 };

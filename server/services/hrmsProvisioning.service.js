@@ -166,6 +166,7 @@ export const syncCompanyToHrms = async ({
   if (tenantId) {
     const updates = {
       hrmsTenantId: tenantId,
+      tenantId,
       companyCode: resolvedCompanyCode,
       code: resolvedCompanyCode
     };

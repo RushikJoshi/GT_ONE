@@ -345,31 +345,38 @@ const findHrmsEmployeeOtpRecord = async ({ email, requestId, tenantId }) => {
         continue;
       }
 
-    const employeeDoc = await collection.findOne(
-      {
-        email: {
-          $regex: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i")
+      const employeeDoc = await collection.findOne(
+        {
+          email: {
+            $regex: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i")
+          },
+          "loginOtp.requestId": normalizedRequestId
         },
-        "loginOtp.requestId": normalizedRequestId
-      },
-      {
-        projection: {
-          _id: 1,
-          firstName: 1,
-          lastName: 1,
-          email: 1,
-          role: 1,
-          loginOtp: 1
+        {
+          projection: {
+            _id: 1,
+            firstName: 1,
+            lastName: 1,
+            email: 1,
+            role: 1,
+            loginOtp: 1
+          }
         }
+      );
 
-        if (String(employeeDoc.loginOtp.requestId || "").trim() !== normalizedRequestId) {
-          continue;
-        }
+      if (!employeeDoc || !employeeDoc.loginOtp) {
+        continue;
+      }
 
-    return buildHrmsEmployeeAdapter({
-      employeeDoc,
-      tenantId: currentTenantId
-    });
+      if (String(employeeDoc.loginOtp.requestId || "").trim() !== normalizedRequestId) {
+        continue;
+      }
+
+      return buildHrmsEmployeeAdapter({
+        employeeDoc,
+        tenantId: currentTenantId
+      });
+    }
   }
 
   return null;

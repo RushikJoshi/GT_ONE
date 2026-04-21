@@ -17,6 +17,12 @@ const companySchema = new mongoose.Schema(
       lowercase: true,
       trim: true
     },
+    companyEmail: {
+      type: String,
+      default: null,
+      lowercase: true,
+      trim: true
+    },
     code: {
       type: String,
       default: null,
@@ -33,6 +39,11 @@ const companySchema = new mongoose.Schema(
       trim: true
     },
     databaseName: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    apiKey: {
       type: String,
       default: null,
       trim: true
@@ -87,6 +98,11 @@ const companySchema = new mongoose.Schema(
       default: null
     },
     hrmsTenantId: {
+      type: String,
+      default: null,
+      trim: true
+    },
+    tenantId: {
       type: String,
       default: null,
       trim: true

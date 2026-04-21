@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import api, { setAccessToken } from "../lib/api";
+import api, { getAccessToken, setAccessToken } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import "./Login.css";
 
@@ -9,6 +9,10 @@ function Login() {
   const [searchParams] = useSearchParams();
   const { setUser } = useAuth();
   const [didCheckSession, setDidCheckSession] = useState(false);
+  const TOKEN_BRIDGE_ALLOWED_ORIGINS = new Set([
+    "http://localhost:5176",
+    "http://127.0.0.1:5176"
+  ]);
 
   const markRedirectAttempt = (url) => {
     try {
@@ -41,7 +45,26 @@ function Login() {
     }
   };
 
-  const safeRedirectTo = (url, { replace = true } = {}) => {
+  const buildBridgeRedirectUrl = (url, accessToken) => {
+    if (!url || typeof url !== "string" || !accessToken) {
+      return url;
+    }
+
+    try {
+      const parsed = new URL(url);
+      if (!TOKEN_BRIDGE_ALLOWED_ORIGINS.has(parsed.origin)) {
+        return url;
+      }
+      if (!parsed.searchParams.has("token")) {
+        parsed.searchParams.set("token", accessToken);
+      }
+      return parsed.toString();
+    } catch {
+      return url;
+    }
+  };
+
+  const safeRedirectTo = (url, { replace = true, accessToken = null } = {}) => {
     if (!url || typeof url !== "string") return false;
     if (!/^https?:\/\//i.test(url)) return false;
 
@@ -50,11 +73,12 @@ function Login() {
       return false;
     }
 
+    const finalUrl = buildBridgeRedirectUrl(url, accessToken || getAccessToken());
     markRedirectAttempt(url);
     if (replace) {
-      window.location.replace(url);
+      window.location.replace(finalUrl);
     } else {
-      window.location.assign(url);
+      window.location.assign(finalUrl);
     }
     return true;
   };
@@ -260,6 +284,10 @@ function Login() {
 
         const nextUser = res.data.user;
         setUser(nextUser);
+        const accessToken = res.data?.accessToken || null;
+        if (accessToken) {
+          setAccessToken(accessToken);
+        }
 
         if (isPsaRole(nextUser?.role)) {
           navigate("/dashboard", { replace: true });
@@ -271,14 +299,14 @@ function Login() {
         const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
         if (typeof redirectUrl === "string" && redirectUrl.startsWith("http")) {
-          if (safeRedirectTo(redirectUrl, { replace: false })) {
+          if (safeRedirectTo(redirectUrl, { replace: false, accessToken })) {
             return;
           }
         }
 
         const fallbackRedirect = resolveFallbackRedirect(normalizedRole);
         if (fallbackRedirect) {
-          if (safeRedirectTo(fallbackRedirect, { replace: false })) {
+          if (safeRedirectTo(fallbackRedirect, { replace: false, accessToken })) {
             return;
           }
         }
@@ -327,8 +355,9 @@ function Login() {
 
       const nextUser = res.data.user;
       setUser(nextUser);
-      if (res.data?.accessToken) {
-        setAccessToken(res.data.accessToken);
+      const accessToken = res.data?.accessToken || null;
+      if (accessToken) {
+        setAccessToken(accessToken);
       }
 
       if (isPsaRole(nextUser?.role)) {
@@ -341,14 +370,14 @@ function Login() {
       const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
       if (typeof redirectUrl === "string" && redirectUrl.startsWith("http")) {
-        if (safeRedirectTo(redirectUrl, { replace: false })) {
+        if (safeRedirectTo(redirectUrl, { replace: false, accessToken })) {
           return;
         }
       }
 
       const fallbackRedirect = resolveFallbackRedirect(normalizedRole);
       if (fallbackRedirect) {
-        if (safeRedirectTo(fallbackRedirect, { replace: false })) {
+        if (safeRedirectTo(fallbackRedirect, { replace: false, accessToken })) {
           return;
         }
       }

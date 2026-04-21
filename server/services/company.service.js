@@ -51,6 +51,60 @@ const generateCompanyCode = async ({ name, email }) => {
   return `${prefix}${next}`;
 };
 
+const mapCreateCompanyError = (error) => {
+  if (!error) {
+    return { status: 500, message: "Failed to create company" };
+  }
+
+  if (error?.code === 11000) {
+    const duplicateKeys = Object.keys(error?.keyPattern || error?.keyValue || {});
+
+    if (duplicateKeys.includes("tenantId")) {
+      return {
+        status: 409,
+        message: "Company creation failed because of a legacy tenant mapping conflict. Please try again."
+      };
+    }
+
+    if (duplicateKeys.includes("email") || duplicateKeys.includes("companyEmail")) {
+      return {
+        status: 409,
+        message: "A company or admin with this email already exists."
+      };
+    }
+
+    if (
+      duplicateKeys.includes("code") ||
+      duplicateKeys.includes("companyCode") ||
+      duplicateKeys.includes("apiKey")
+    ) {
+      return {
+        status: 409,
+        message: "Generated company code already exists. Please try again."
+      };
+    }
+
+    if (duplicateKeys.includes("organizationId") || duplicateKeys.includes("databaseName")) {
+      return {
+        status: 409,
+        message: "Company provisioning identifiers already exist. Please try again."
+      };
+    }
+  }
+
+  if (error?.name === "ValidationError") {
+    return {
+      status: 400,
+      message: Object.values(error.errors || {})[0]?.message || "Invalid company details"
+    };
+  }
+
+  return {
+    status: 500,
+    message: error.message || "Failed to create company"
+  };
+};
+
 export const createCompanyWithAdmin = async ({
   name,
   email,
@@ -79,6 +133,7 @@ export const createCompanyWithAdmin = async ({
   const normalizedAdminEmail = String(adminEmail || normalizedCompanyEmail).trim().toLowerCase();
   const adminUserName = String(adminName || "Company Admin").trim() || "Company Admin";
   const adminUserPassword = String(adminPassword || "admin@2026").trim();
+  const normalizedDistrict = district ? String(district).trim() : null;
 
   if (!adminUserPassword) {
     return { error: { status: 400, message: "admin password is required" } };
@@ -105,44 +160,61 @@ export const createCompanyWithAdmin = async ({
     email: normalizedCompanyEmail
   });
 
-  const company = await Company.create({
-    name: normalizedName,
-    email: normalizedCompanyEmail,
-    code: generatedCompanyCode,
-    companyCode: generatedCompanyCode,
-    // Some environments have a unique Mongo index on `organizationId`.
-    // Ensure it is always set to a unique value during creation.
-    organizationId: generatedCompanyCode,
-    // Some environments also have a unique Mongo index on `databaseName`.
-    // Use a deterministic, unique value based on generated code.
-    databaseName: String(generatedCompanyCode).toLowerCase(),
-    phone: phone ? String(phone).trim() : null,
-    companyType: companyType ? String(companyType).trim() : null,
-    gstNumber: gstNumber ? String(gstNumber).trim() : null,
-    panNumber: panNumber ? String(panNumber).trim() : null,
-    registrationNo: registrationNo ? String(registrationNo).trim() : null,
-    country: country ? String(country).trim() : null,
-    state: state ? String(state).trim() : null,
-    district: district ? String(district).trim() : null,
-    officeAddress: officeAddress ? String(officeAddress).trim() : null,
-    subCompanyLimit: subCompanyLimit === undefined || subCompanyLimit === null || subCompanyLimit === ""
-      ? null
-      : Number.isFinite(Number(subCompanyLimit))
-        ? Number(subCompanyLimit)
-        : null,
-    hrmsEnabledModules: defaultHrms.hrmsEnabledModules,
-    hrmsModules: defaultHrms.hrmsModules
-  });
+  let company;
+  try {
+    company = await Company.create({
+      name: normalizedName,
+      email: normalizedCompanyEmail,
+      companyEmail: normalizedCompanyEmail,
+      code: generatedCompanyCode,
+      companyCode: generatedCompanyCode,
+      // Legacy deployments may still have a unique index on `tenantId`.
+      // Seed a unique placeholder immediately, then overwrite it with the HRMS tenant id after provisioning.
+      tenantId: generatedCompanyCode,
+      // Some environments have a unique Mongo index on `organizationId`.
+      // Ensure it is always set to a unique value during creation.
+      organizationId: generatedCompanyCode,
+      // Some environments also have a unique Mongo index on `databaseName`.
+      // Use a deterministic, unique value based on generated code.
+      databaseName: String(generatedCompanyCode).toLowerCase(),
+      // Some legacy schemas keep a unique `apiKey` index even when the field is no longer used.
+      apiKey: generatedCompanyCode,
+      phone: phone ? String(phone).trim() : null,
+      companyType: companyType ? String(companyType).trim() : null,
+      gstNumber: gstNumber ? String(gstNumber).trim() : null,
+      panNumber: panNumber ? String(panNumber).trim() : null,
+      registrationNo: registrationNo ? String(registrationNo).trim() : null,
+      country: country ? String(country).trim() : null,
+      state: state ? String(state).trim() : null,
+      district: normalizedDistrict,
+      officeAddress: officeAddress ? String(officeAddress).trim() : null,
+      subCompanyLimit: subCompanyLimit === undefined || subCompanyLimit === null || subCompanyLimit === ""
+        ? null
+        : Number.isFinite(Number(subCompanyLimit))
+          ? Number(subCompanyLimit)
+          : null,
+      hrmsEnabledModules: defaultHrms.hrmsEnabledModules,
+      hrmsModules: defaultHrms.hrmsModules
+    });
+  } catch (error) {
+    return { error: mapCreateCompanyError(error) };
+  }
 
   const hashedPassword = await bcrypt.hash(adminUserPassword, 10);
 
-  const companyAdmin = await User.create({
-    name: adminUserName,
-    email: normalizedAdminEmail,
-    password: hashedPassword,
-    role: ROLES.COMPANY_ADMIN,
-    companyId: company._id
-  });
+  let companyAdmin;
+  try {
+    companyAdmin = await User.create({
+      name: adminUserName,
+      email: normalizedAdminEmail,
+      password: hashedPassword,
+      role: ROLES.COMPANY_ADMIN,
+      companyId: company._id
+    });
+  } catch (error) {
+    await Company.deleteOne({ _id: company._id });
+    return { error: mapCreateCompanyError(error) };
+  }
 
   await Company.updateOne(
     { _id: company._id },
@@ -154,13 +226,21 @@ export const createCompanyWithAdmin = async ({
   );
 
   if (productDocs.length) {
-    await CompanyProduct.insertMany(
-      productDocs.map((product) => ({
-        companyId: company._id,
-        productId: product._id,
-        isActive: true
-      }))
-    );
+    try {
+      await CompanyProduct.insertMany(
+        productDocs.map((product) => ({
+          companyId: company._id,
+          productId: product._id,
+          isActive: true
+        }))
+      );
+    } catch (error) {
+      await Promise.all([
+        User.deleteOne({ _id: companyAdmin._id }),
+        Company.deleteOne({ _id: company._id })
+      ]);
+      return { error: mapCreateCompanyError(error) };
+    }
   }
 
   const selectedProductNames = productDocs.map((product) => product.name);
