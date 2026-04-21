@@ -4,7 +4,10 @@ import User from "../models/User.js";
 import { sendLoginOtpEmail } from "./email.service.js";
 
 const OTP_EXPIRY_MINUTES = Number(process.env.LOGIN_OTP_EXPIRY_MINUTES || 5);
-const OTP_EXPIRY_MS = OTP_EXPIRY_MINUTES * 60 * 1000;
+const OTP_EXPIRY_SECONDS = Number(process.env.LOGIN_OTP_EXPIRY_SECONDS || 60);
+const OTP_EXPIRY_MS = OTP_EXPIRY_SECONDS * 1000;
+const OTP_RESEND_COOLDOWN_SECONDS = Number(process.env.LOGIN_OTP_RESEND_COOLDOWN_SECONDS || 60);
+const OTP_RESEND_COOLDOWN_MS = OTP_RESEND_COOLDOWN_SECONDS * 1000;
 const OTP_MAX_ATTEMPTS = Number(process.env.LOGIN_OTP_MAX_ATTEMPTS || 5);
 
 const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
@@ -297,8 +300,13 @@ const buildHrmsOtpFallbackAdapter = ({ email, requestId, otpState }) => ({
 });
 
 const findSsoUserOtpRecord = async ({ email, requestId }) => {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedRequestId = String(requestId || "").trim();
   const userDoc = await User.collection.findOne(
-    { email: normalizeEmail(email) },
+    {
+      email: normalizedEmail,
+      "loginOtp.requestId": normalizedRequestId
+    },
     {
       projection: {
         _id: 1,
@@ -313,7 +321,7 @@ const findSsoUserOtpRecord = async ({ email, requestId }) => {
     }
   );
 
-  if (!userDoc?.loginOtp || String(userDoc.loginOtp.requestId || "").trim() !== String(requestId || "").trim()) {
+  if (!userDoc?.loginOtp) {
     return null;
   }
 
@@ -337,45 +345,31 @@ const findHrmsEmployeeOtpRecord = async ({ email, requestId, tenantId }) => {
         continue;
       }
 
-      try {
-        const employeeDoc = await collection.findOne(
-          {
-            $or: [
-              { email: { $regex: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i") } },
-              { Email: { $regex: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i") } }
-            ]
-          },
-          {
-            projection: {
-              _id: 1,
-              firstName: 1,
-              lastName: 1,
-              email: 1,
-              Email: 1,
-              role: 1,
-              loginOtp: 1
-            }
-          }
-        );
-
-        if (!employeeDoc?.loginOtp) {
-          continue;
+    const employeeDoc = await collection.findOne(
+      {
+        email: {
+          $regex: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i")
+        },
+        "loginOtp.requestId": normalizedRequestId
+      },
+      {
+        projection: {
+          _id: 1,
+          firstName: 1,
+          lastName: 1,
+          email: 1,
+          role: 1,
+          loginOtp: 1
         }
 
         if (String(employeeDoc.loginOtp.requestId || "").trim() !== normalizedRequestId) {
           continue;
         }
 
-        console.log(`[OTP] Found employee record in tenant=${currentTenantId} collection=${collName}`);
-        return buildHrmsEmployeeAdapter({
-          employeeDoc,
-          tenantId: currentTenantId
-        });
-      } catch (_err) {
-        // collection might not exist or connection issues
-        continue;
-      }
-    }
+    return buildHrmsEmployeeAdapter({
+      employeeDoc,
+      tenantId: currentTenantId
+    });
   }
 
   return null;
@@ -486,7 +480,7 @@ export const createLoginOtpChallenge = async ({
     const delivery = await sendLoginOtpEmail({
       to: email,
       otp,
-      expiresInMinutes: OTP_EXPIRY_MINUTES
+      expiresInMinutes: Math.max(1, Math.ceil(OTP_EXPIRY_SECONDS / 60))
     });
 
     return {
@@ -496,7 +490,8 @@ export const createLoginOtpChallenge = async ({
       tenantId,
       deliveryMode: delivery.deliveryMode,
       devOtpPreview: delivery.previewOtp,
-      expiresInSeconds: Math.floor(OTP_EXPIRY_MS / 1000)
+      expiresInSeconds: OTP_EXPIRY_SECONDS,
+      expiresAt: expiresAt.toISOString()
     };
   } catch (error) {
     if (authSource === "hrms_employee") {
@@ -527,6 +522,117 @@ export const createLoginOtpChallenge = async ({
       });
     }
 
+    throw error;
+  }
+};
+
+export const resendLoginOtpChallenge = async ({
+  email,
+  requestId,
+  source,
+  tenantId,
+  ipAddress,
+  userAgent
+}) => {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedRequestId = String(requestId || "").trim();
+
+  if (!normalizedEmail || !normalizedRequestId) {
+    return {
+      error: {
+        status: 400,
+        reason: "missing_fields",
+        message: "Email and otpRequestId are required"
+      }
+    };
+  }
+
+  const record = await findOtpRecord({
+    email: normalizedEmail,
+    requestId: normalizedRequestId,
+    source,
+    tenantId
+  });
+
+  if (!record?.otpState) {
+    return {
+      error: {
+        status: 400,
+        reason: "request_invalid",
+        message: "Invalid or expired OTP request"
+      }
+    };
+  }
+
+  const currentOtpState = record.otpState;
+  if (currentOtpState.status === "verified") {
+    return {
+      error: {
+        status: 400,
+        reason: "request_consumed",
+        message: "OTP already verified. Please login again."
+      }
+    };
+  }
+
+  const createdAtMs = new Date(currentOtpState.createdAt || Date.now()).getTime();
+  const elapsedMs = Date.now() - createdAtMs;
+  if (elapsedMs < OTP_RESEND_COOLDOWN_MS) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((OTP_RESEND_COOLDOWN_MS - elapsedMs) / 1000));
+    return {
+      error: {
+        status: 429,
+        reason: "resend_cooldown",
+        message: `Please wait ${retryAfterSeconds}s before requesting a new OTP`,
+        retryAfterSeconds
+      }
+    };
+  }
+
+  const nextRequestId = crypto.randomUUID();
+  const otp = generateOtp();
+  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
+  const nextOtpState = {
+    ...currentOtpState,
+    requestId: nextRequestId,
+    otpHash: hashOtp({ requestId: nextRequestId, email: record.email, otp }),
+    status: "pending",
+    verificationAttempts: 0,
+    ipAddress: ipAddress ? String(ipAddress).trim() : currentOtpState.ipAddress || null,
+    userAgent: userAgent ? String(userAgent).trim() : currentOtpState.userAgent || null,
+    expiresAt,
+    verifiedAt: null,
+    invalidatedAt: null,
+    lastAttemptAt: null,
+    createdAt: new Date()
+  };
+
+  await record.persist(nextOtpState);
+
+  try {
+    const delivery = await sendLoginOtpEmail({
+      to: record.email,
+      otp,
+      expiresInMinutes: Math.max(1, Math.ceil(OTP_EXPIRY_SECONDS / 60))
+    });
+
+    return {
+      requestId: nextRequestId,
+      email: record.email,
+      source: nextOtpState.authSource,
+      tenantId: nextOtpState.tenantId || null,
+      deliveryMode: delivery.deliveryMode,
+      devOtpPreview: delivery.previewOtp,
+      expiresInSeconds: OTP_EXPIRY_SECONDS,
+      expiresAt: expiresAt.toISOString()
+    };
+  } catch (error) {
+    await record.persist({
+      ...nextOtpState,
+      status: "expired",
+      invalidatedAt: new Date(),
+      otpHash: null
+    });
     throw error;
   }
 };

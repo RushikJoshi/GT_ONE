@@ -23,6 +23,7 @@ import {
 } from "../services/bruteForce.service.js";
 import {
   createLoginOtpChallenge,
+  resendLoginOtpChallenge,
   verifyLoginOtpChallenge
 } from "../services/otp.service.js";
 
@@ -34,6 +35,8 @@ const getRequestOrigin = (req) => req.headers.origin || req.headers.referer || n
 const applySessionCookie = ({ req, res, token }) => {
   const cookieOptions = getCookieOptions(req.headers.host);
   res.cookie("sso_token", token, cookieOptions);
+  // Keep legacy cookie cleared to avoid oversized Cookie/Set-Cookie headers in proxy hops.
+  res.clearCookie("token", cookieOptions);
 };
 
 const applyRefreshCookie = ({ req, res, token }) => {
@@ -208,7 +211,8 @@ export const login = async (req, res) => {
       otpSource: otpChallenge.source,
       otpTenantId: otpChallenge.tenantId,
       devOtpPreview: otpChallenge.devOtpPreview || null,
-      expiresInSeconds: otpChallenge.expiresInSeconds
+      expiresInSeconds: otpChallenge.expiresInSeconds,
+      expiresAt: otpChallenge.expiresAt
     });
   } catch (error) {
     console.error(`[SSO] Login Error: ${error.message}`);
@@ -269,7 +273,10 @@ export const verifyOtp = async (req, res) => {
         }
       }
 
-      return res.status(verification.error.status).json({ message: verification.error.message });
+      return res.status(verification.error.status).json({
+        message: verification.error.message,
+        reason: verification.error.reason || null
+      });
     }
 
     clearBruteForceFailures({
@@ -315,6 +322,52 @@ export const verifyOtp = async (req, res) => {
 };
 
 /**
+ * @desc    Resend login OTP with cooldown
+ * @route   POST /api/auth/resend-otp
+ */
+export const resendOtp = async (req, res) => {
+  try {
+    const { email, otpRequestId, requestId, source, otpSource, tenantId, otpTenantId } = req.body || {};
+    const challenge = await resendLoginOtpChallenge({
+      email: String(email || "").trim().toLowerCase(),
+      requestId: otpRequestId || requestId,
+      source: source || otpSource,
+      tenantId: tenantId || otpTenantId,
+      ipAddress: getClientIpAddress(req),
+      userAgent: req.headers["user-agent"]
+    });
+
+    if (challenge?.error) {
+      if (challenge.error.retryAfterSeconds) {
+        res.setHeader("Retry-After", String(challenge.error.retryAfterSeconds));
+      }
+      return res.status(challenge.error.status).json({
+        message: challenge.error.message,
+        retryAfterSeconds: challenge.error.retryAfterSeconds || null
+      });
+    }
+
+    return res.json({
+      success: true,
+      message:
+        challenge.deliveryMode === "json"
+          ? "OTP regenerated. Use preview OTP for local testing."
+          : "A new OTP has been sent.",
+      email: challenge.email,
+      otpRequestId: challenge.requestId,
+      otpSource: challenge.source,
+      otpTenantId: challenge.tenantId,
+      devOtpPreview: challenge.devOtpPreview || null,
+      expiresInSeconds: challenge.expiresInSeconds,
+      expiresAt: challenge.expiresAt
+    });
+  } catch (error) {
+    console.error(`[SSO] OTP Resend Error: ${error.message}`);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+/**
  * @desc    Get current user profile
  * @route   GET /api/auth/me
  */
@@ -322,10 +375,11 @@ export const getMe = async (req, res) => {
   try {
     let sessionUser = req.user || null;
 
-    if (!sessionUser && req.cookies?.sso_token) {
+    const sessionToken = req.cookies?.sso_token || req.cookies?.token;
+    if (!sessionUser && sessionToken) {
       try {
         sessionUser = verifyJwtWithContract({
-          token: req.cookies.sso_token,
+          token: sessionToken,
           audience: "sso"
         });
       } catch (_error) {
@@ -396,19 +450,10 @@ export const getMe = async (req, res) => {
  * @desc    Logout & clear cookie
  */
 export const logout = async (req, res) => {
-  revokeSessionToken(req.cookies?.sso_token);
+  revokeSessionToken(req.cookies?.sso_token || req.cookies?.token);
   const cookieOptions = getCookieOptions(req.headers.host);
   res.clearCookie("sso_token", cookieOptions);
-  const refreshToken = req.cookies?.sso_refresh;
-  if (refreshToken) {
-    try {
-      const decoded = verifyRefreshJwt(refreshToken);
-      await revokeRefreshSession(decoded?.jti);
-    } catch {
-      // ignore
-    }
-  }
-  res.clearCookie("sso_refresh", getRefreshCookieOptions(req.headers.host));
+  res.clearCookie("token", cookieOptions);
 
   const { redirect } = req.query;
   if (redirect && (redirect.startsWith("http") || redirect.startsWith("/"))) {

@@ -25,7 +25,17 @@ function Login() {
       const last = Number(window.sessionStorage.getItem(key) || "0");
       // Prevent redirect ping-pong loops: if we already tried to send the user to this URL recently,
       // don't auto-redirect again.
-      return Number.isFinite(last) && last > 0 && Date.now() - last < 60_000;
+      return Number.isFinite(last) && last > 0 && Date.now() - last < 5_000;
+    } catch {
+      return false;
+    }
+  };
+
+  const hasRecentRedirectAttempt = (url, windowMs = 120_000) => {
+    try {
+      const key = `gtone.redirectAttempt:${url}`;
+      const last = Number(window.sessionStorage.getItem(key) || "0");
+      return Number.isFinite(last) && last > 0 && Date.now() - last < windowMs;
     } catch {
       return false;
     }
@@ -57,7 +67,7 @@ function Login() {
     const HRMS_BASE = "http://localhost:5176";
 
     if (["company_admin", "admin", "hr", "hr_admin", "owner"].includes(normalizedRole)) {
-      return `${HRMS_BASE}/tenant/admin-dashboard`;
+      return `${HRMS_BASE}/tenant/dashboard`;
     }
     if (["manager", "team_manager"].includes(normalizedRole)) {
       return `${HRMS_BASE}/tenant/dashboard`;
@@ -97,7 +107,48 @@ function Login() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
+  const [resendingOtp, setResendingOtp] = useState(false);
+  const [otpSecondsLeft, setOtpSecondsLeft] = useState(0);
+  const [resendSecondsLeft, setResendSecondsLeft] = useState(0);
   const isOtpStep = Boolean(otpChallenge?.otpRequestId);
+
+  useEffect(() => {
+    if (!isOtpStep) {
+      setOtpSecondsLeft(0);
+      setResendSecondsLeft(0);
+      return undefined;
+    }
+
+    const expiresAtMs = otpChallenge?.expiresAt ? new Date(otpChallenge.expiresAt).getTime() : null;
+    if (Number.isFinite(expiresAtMs)) {
+      setOtpSecondsLeft(Math.max(0, Math.ceil((expiresAtMs - Date.now()) / 1000)));
+    } else {
+      setOtpSecondsLeft(Math.max(0, Number(otpChallenge?.expiresInSeconds || 0)));
+    }
+    setResendSecondsLeft(Math.max(0, Number(otpChallenge?.expiresInSeconds || 0)));
+    return undefined;
+  }, [isOtpStep, otpChallenge?.expiresAt, otpChallenge?.expiresInSeconds, otpChallenge?.otpRequestId]);
+
+  useEffect(() => {
+    if (!isOtpStep) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      setOtpSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0));
+      setResendSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [isOtpStep]);
+
+  useEffect(() => {
+    if (!hasExplicitRedirectUrl) return;
+
+    if (hasRecentRedirectAttempt(redirect)) {
+      setError("App redirect failed and returned to login. Please try again or contact admin.");
+    }
+  }, [hasExplicitRedirectUrl, redirect]);
 
   useEffect(() => {
     let active = true;
@@ -124,8 +175,9 @@ function Login() {
         }
 
         if (hasExplicitRedirectUrl) {
-          safeRedirectTo(redirect, { replace: true });
-          return;
+          if (safeRedirectTo(redirect, { replace: true })) {
+            return;
+          }
         }
 
         const normalizedRole = String(nextUser?.role || "")
@@ -135,8 +187,9 @@ function Login() {
 
         const roleRedirect = resolveFallbackRedirect(normalizedRole);
         if (roleRedirect) {
-          safeRedirectTo(roleRedirect, { replace: true });
-          return;
+          if (safeRedirectTo(roleRedirect, { replace: true })) {
+            return;
+          }
         }
 
       } catch (_error) {
@@ -218,14 +271,16 @@ function Login() {
         const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
         if (typeof redirectUrl === "string" && redirectUrl.startsWith("http")) {
-          safeRedirectTo(redirectUrl, { replace: false });
-          return;
+          if (safeRedirectTo(redirectUrl, { replace: false })) {
+            return;
+          }
         }
 
         const fallbackRedirect = resolveFallbackRedirect(normalizedRole);
         if (fallbackRedirect) {
-          safeRedirectTo(fallbackRedirect, { replace: false });
-          return;
+          if (safeRedirectTo(fallbackRedirect, { replace: false })) {
+            return;
+          }
         }
 
         setError("Login successful, but no app redirect is configured.");
@@ -258,7 +313,8 @@ function Login() {
           otpSource: res.data.otpSource,
           otpTenantId: res.data.otpTenantId,
           devOtpPreview: res.data.devOtpPreview || null,
-          expiresInSeconds: res.data.expiresInSeconds
+          expiresInSeconds: res.data.expiresInSeconds,
+          expiresAt: res.data.expiresAt || null
         });
         setOtpCode("");
         setNotice(
@@ -285,18 +341,23 @@ function Login() {
       const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
       if (typeof redirectUrl === "string" && redirectUrl.startsWith("http")) {
-        safeRedirectTo(redirectUrl, { replace: false });
-        return;
+        if (safeRedirectTo(redirectUrl, { replace: false })) {
+          return;
+        }
       }
 
       const fallbackRedirect = resolveFallbackRedirect(normalizedRole);
       if (fallbackRedirect) {
-        safeRedirectTo(fallbackRedirect, { replace: false });
-        return;
+        if (safeRedirectTo(fallbackRedirect, { replace: false })) {
+          return;
+        }
       }
 
       setError("Login successful, but no app redirect is configured.");
     } catch (requestError) {
+      if (isOtpStep && requestError?.response?.data?.reason === "otp_expired") {
+        setOtpSecondsLeft(0);
+      }
       const message = requestError?.response?.data?.message || "Login failed";
       setError(message);
     } finally {
@@ -304,9 +365,58 @@ function Login() {
     }
   };
 
+  const handleResendOtp = async () => {
+    if (!isOtpStep || resendingOtp || resendSecondsLeft > 0) {
+      return;
+    }
+
+    setError("");
+    setNotice("");
+    try {
+      setResendingOtp(true);
+      const query = redirect ? `?redirect=${encodeURIComponent(redirect)}` : "";
+      const res = await api.post(`/auth/resend-otp${query}`, {
+        email: otpChallenge.email,
+        otpRequestId: otpChallenge.otpRequestId,
+        otpSource: otpChallenge.otpSource,
+        otpTenantId: otpChallenge.otpTenantId
+      });
+
+      const nextChallenge = {
+        email: res.data.email || otpChallenge.email,
+        otpRequestId: res.data.otpRequestId,
+        otpSource: res.data.otpSource || otpChallenge.otpSource,
+        otpTenantId: res.data.otpTenantId || otpChallenge.otpTenantId,
+        devOtpPreview: res.data.devOtpPreview || null,
+        expiresInSeconds: Number(res.data.expiresInSeconds || 60),
+        expiresAt: res.data.expiresAt || null
+      };
+
+      setOtpChallenge(nextChallenge);
+      setOtpCode("");
+      setOtpSecondsLeft(nextChallenge.expiresInSeconds);
+      setResendSecondsLeft(nextChallenge.expiresInSeconds);
+      setNotice(
+        res.data?.devOtpPreview
+          ? `${res.data?.message || "OTP regenerated."} Preview OTP: ${res.data.devOtpPreview}`
+          : (res.data?.message || "New OTP sent.")
+      );
+    } catch (requestError) {
+      const retryAfter = Number(requestError?.response?.data?.retryAfterSeconds || 0);
+      if (retryAfter > 0) {
+        setResendSecondsLeft(retryAfter);
+      }
+      setError(requestError?.response?.data?.message || "Failed to resend OTP");
+    } finally {
+      setResendingOtp(false);
+    }
+  };
+
   const resetOtpStep = () => {
     setOtpChallenge(null);
     setOtpCode("");
+    setOtpSecondsLeft(0);
+    setResendSecondsLeft(0);
     setNotice("");
     setError("");
   };
@@ -448,24 +558,47 @@ function Login() {
                   />
                 </div>
                 <p style={{ marginTop: "10px", color: "#64748b", fontSize: "0.95rem" }}>
-                  This OTP expires in about {Math.max(1, Math.ceil((otpChallenge?.expiresInSeconds || 0) / 60))} minutes.
+                  {otpSecondsLeft > 0
+                    ? `This OTP expires in ${otpSecondsLeft}s.`
+                    : "OTP expired. You can request a new OTP now."}
                 </p>
               </div>
             )}
 
-            <button type="submit" className="login-button" disabled={loading}>
+            <button type="submit" className="login-button" disabled={loading || (isOtpStep && otpSecondsLeft <= 0)}>
               {loading ? (isOtpStep ? "Verifying..." : "Signing in...") : (isOtpStep ? "Verify OTP" : "Sign In")}
             </button>
 
             {isOtpStep && (
-              <button
-                type="button"
-                className="login-button"
-                onClick={resetOtpStep}
-                style={{ marginTop: "12px", background: "#e2e8f0", color: "#0f172a" }}
-              >
-                Use Different Credentials
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="login-button"
+                  onClick={handleResendOtp}
+                  disabled={resendingOtp || resendSecondsLeft > 0}
+                  style={{
+                    marginTop: "12px",
+                    background: (resendingOtp || resendSecondsLeft > 0) ? "#cbd5e1" : "#0f172a",
+                    color: "#ffffff",
+                    boxShadow: "none"
+                  }}
+                >
+                  {resendingOtp
+                    ? "Resending OTP..."
+                    : resendSecondsLeft > 0
+                      ? `Resend OTP in ${resendSecondsLeft}s`
+                      : "Resend OTP"}
+                </button>
+
+                <button
+                  type="button"
+                  className="login-button"
+                  onClick={resetOtpStep}
+                  style={{ marginTop: "12px", background: "#e2e8f0", color: "#0f172a" }}
+                >
+                  Use Different Credentials
+                </button>
+              </>
             )}
           </form>
         </div>
