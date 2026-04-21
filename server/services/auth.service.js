@@ -101,7 +101,7 @@ const normalizeRole = (role) => String(role || "").trim().toLowerCase();
 
 const HRMS_ROLE_REDIRECT_PATHS = {
   SUPER_ADMIN: "/super-admin/dashboard",
-  TENANT_ADMIN: "/tenant/admin-dashboard",
+  TENANT_ADMIN: "/tenant/dashboard",
   TENANT_FALLBACK: "/tenant/dashboard",
   EMPLOYEE: "/employee/dashboard",
   FALLBACK: "/access-denied"
@@ -695,6 +695,29 @@ export const resolveLoginRedirect = ({ user, redirect, products, requestOrigin }
         });
         return "__NO_HRMS_ACCESS__";
       }
+      try {
+        const explicitUrl = new URL(explicitRedirect);
+        const explicitPath = String(explicitUrl.pathname || "").toLowerCase();
+        const rolePath = getRoleRedirectPathForHrms(user.role);
+        const normalizedRole = normalizeRole(user.role);
+        const isEmployee = EMPLOYEE_ROLES.has(normalizedRole);
+        const isTenantRole =
+          TENANT_ADMIN_ROLES.has(normalizedRole) || TENANT_FALLBACK_ROLES.has(normalizedRole);
+
+        // Keep employee and tenant/company flows isolated even if stale redirect param is sent.
+        if (
+          (isEmployee && explicitPath.startsWith("/tenant")) ||
+          (isTenantRole && explicitPath.startsWith("/employee"))
+        ) {
+          const roleRedirectUrl = new URL(buildAppUrlLikeOrigin(getHrmsBaseUrl(), requestOrigin));
+          roleRedirectUrl.pathname = rolePath;
+          roleRedirectUrl.search = "";
+          roleRedirectUrl.hash = "";
+          return roleRedirectUrl.toString();
+        }
+      } catch (_error) {
+        // fallback to explicit redirect below
+      }
       return explicitRedirect;
     }
 
@@ -819,20 +842,26 @@ export const validateLogin = async ({ identifier, password }) => {
     return { error: { status: 400, message: "Email and password are required" } };
   }
 
-  // 1. Check SSO User collection first (admin/HR users)
-  const ssoUser = await User.findOne({ email: normalizedEmail });
-  if (ssoUser) {
-    const isPasswordValid = await bcrypt.compare(normalizedPassword, ssoUser.password);
-    if (isPasswordValid) {
-      logAuth("credentials_validated", {
-        email: normalizedEmail,
-        role: ssoUser.role,
-        source: "sso_user"
-      });
-      return { user: ssoUser };
+  // 1. Check SSO User collection first (admin/HR users).
+  // Duplicate emails are allowed, so resolve by matching the password.
+  const ssoUsers = await User.find({ email: normalizedEmail }).sort({ createdAt: -1 });
+  if (ssoUsers.length) {
+    for (const ssoUser of ssoUsers) {
+      const isPasswordValid = await bcrypt.compare(normalizedPassword, ssoUser.password);
+      if (isPasswordValid) {
+        logAuth("credentials_validated", {
+          email: normalizedEmail,
+          role: ssoUser.role,
+          source: "sso_user"
+        });
+        return { user: ssoUser };
+      }
     }
-    // If password failed here, we fall through to check specific tenant databases below
-    logAuth("sso_password_mismatch_trying_fallback", { email: normalizedEmail });
+    // If password failed for all matched users, fall through to tenant database checks.
+    logAuth("sso_password_mismatch_trying_fallback", {
+      email: normalizedEmail,
+      matchedUsers: ssoUsers.length
+    });
   }
 
   // 2. Fallback: Check HRMS Tenant Databases (Multi-tenant isolation)

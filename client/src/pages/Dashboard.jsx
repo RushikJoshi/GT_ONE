@@ -65,6 +65,24 @@ function Dashboard() {
   const [error, setError] = useState("");
 
   const productNames = useMemo(() => products.map((item) => item.name), [products]);
+  const selectableProductNames = useMemo(
+    () =>
+      (products || [])
+        .map((item) => String(item?.name || "").trim())
+        .filter(Boolean),
+    [products]
+  );
+
+  const normalizeToAvailableProducts = (values) => {
+    const allowMap = new Map(
+      selectableProductNames.map((name) => [String(name).toUpperCase(), name])
+    );
+    return [...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => allowMap.get(String(value || "").trim().toUpperCase()))
+        .filter(Boolean)
+    )];
+  };
 
   const loadData = async () => {
     try {
@@ -162,7 +180,17 @@ function Dashboard() {
 
     try {
       setSubmitting(true);
-      await api.post("/companies", { ...form, adminEmail: form.adminEmail || form.email });
+      const normalizedProducts = normalizeToAvailableProducts(form.products);
+      if (!normalizedProducts.length) {
+        setError("Please select at least one valid product");
+        return;
+      }
+
+      await api.post("/companies", {
+        ...form,
+        adminEmail: form.adminEmail || form.email,
+        products: normalizedProducts
+      });
       appendActivity({
         type: "company_create",
         title: "Company Created",
@@ -177,8 +205,10 @@ function Dashboard() {
       setCompanyLogoPreview("");
       setMessage("Company created successfully");
       await loadData();
+      return true;
     } catch (requestError) {
       setError(requestError?.response?.data?.message || "Failed to create company");
+      return false;
     } finally {
       setSubmitting(false);
     }
@@ -2229,7 +2259,7 @@ function Dashboard() {
                       Product Select
                     </div>
                     <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                      {["CRM", "HRMS", "PMS"].map((productName) => (
+                      {selectableProductNames.map((productName) => (
                         <label
                           key={productName}
                           style={{
@@ -2376,8 +2406,10 @@ function Dashboard() {
               autoComplete="off"
               onSubmit={async (e) => {
                 e.preventDefault();
-                await submitCompany(e);
-                setShowCreateModal(false);
+                const created = await submitCompany(e);
+                if (created) {
+                  setShowCreateModal(false);
+                }
               }}
             >
               {/* Prevent browser autofill from injecting saved credentials */}
@@ -2724,7 +2756,7 @@ function Dashboard() {
                         Product Select
                       </div>
                       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                        {['CRM', 'HRMS', 'PMS'].map((productName) => (
+                        {selectableProductNames.map((productName) => (
                           <label
                             key={productName}
                             style={{

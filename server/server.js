@@ -11,6 +11,7 @@ import tenantRoutes from "./routes/tenant.routes.js";
 import superAdminRoutes from "./routes/superAdmin.routes.js";
 import productRoutes from "./routes/product.routes.js";
 import { seedInitialData } from "./services/seed.service.js";
+import { dropLegacyUniqueEmailIndexes } from "./services/indexMigration.service.js";
 
 dotenv.config();
 
@@ -93,6 +94,9 @@ const connectDB = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI);
     console.log(`[SSO] MongoDB Connected`);
+
+    // Backward-compatible migration: allow duplicate emails in Company/User.
+    await dropLegacyUniqueEmailIndexes();
     
     // Seed initial data (Super Admin)
     await seedInitialData();

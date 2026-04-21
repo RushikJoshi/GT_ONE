@@ -6,7 +6,7 @@ import { verifyJwtWithContract } from "../services/auth.service.js";
  */
 export const protect = async (req, res, next) => {
   try {
-    const token = req.cookies?.sso_token;
+    const token = req.cookies?.sso_token || req.cookies?.token;
     console.log(`[AUTH] Checking token. Found: ${!!token}`);
 
     if (!token) {
@@ -34,7 +34,7 @@ export const protect = async (req, res, next) => {
  */
 export const optionalProtect = async (req, _res, next) => {
   try {
-    const token = req.cookies?.sso_token;
+    const token = req.cookies?.sso_token || req.cookies?.token;
 
     if (!token) {
       req.user = null;
