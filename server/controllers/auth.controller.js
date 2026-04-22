@@ -410,6 +410,7 @@ export const getMe = async (req, res) => {
     if (!user) {
       return res.json({
         authenticated: true,
+        accessToken: sessionToken || null,
         user: {
           id: userId || null,
           _id: userId || null,
@@ -435,6 +436,7 @@ export const getMe = async (req, res) => {
 
     return res.json({
       authenticated: true,
+      accessToken: sessionToken || null,
       user: {
         ...user,
         tenant
