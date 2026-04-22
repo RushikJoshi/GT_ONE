@@ -13,11 +13,9 @@ function Login() {
   const TMS_BASE = "https://devprojects.gitakshmi.com";
 
   const TOKEN_BRIDGE_ALLOWED_ORIGINS = new Set([
-    "http://localhost:5176",
-    "http://127.0.0.1:5176",
     "https://hrms.dev.gitakshmi.com",
     "https://devprojects.gitakshmi.com",
-    ...(import.meta.env.VITE_ALLOWED_ORIGINS || "").split(",").map(o => o.trim()).filter(Boolean)
+    "https://gaccess.gitakshmi.com"
   ]);
 
   const markRedirectAttempt = (url) => {
@@ -60,8 +58,7 @@ function Login() {
       const parsed = new URL(url);
       const origin = parsed.origin;
       // Allow relative paths or allowed origins
-      const isAllowed = TOKEN_BRIDGE_ALLOWED_ORIGINS.has(origin) || 
-                       (import.meta.env.PROD && origin.endsWith(".gitakshmi.com"));
+      const isAllowed = TOKEN_BRIDGE_ALLOWED_ORIGINS.has(origin) || origin.endsWith(".gitakshmi.com");
 
       if (!isAllowed) {
         return url;

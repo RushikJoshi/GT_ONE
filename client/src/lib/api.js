@@ -1,17 +1,7 @@
 import axios from "axios";
 
 const resolveApiBaseUrl = () => {
-  const explicit = String(import.meta.env.VITE_API_BASE_URL || "").trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  // In local dev, bypass Vite proxy to avoid proxy parser/header limits.
-  if (import.meta.env.DEV) {
-    return "http://localhost:5004/api";
-  }
-
-  return "/api";
+  return "https://gaccess.gitakshmi.com/api";
 };
 
 const api = axios.create({
