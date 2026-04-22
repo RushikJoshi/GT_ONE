@@ -42,21 +42,51 @@ app.use(helmet({
 const PORT = process.env.PORT || 5004;
 
 // CORS Configuration
-const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS 
-  ? process.env.CORS_ALLOWED_ORIGINS.split(',').map(o => o.trim()) 
-  : [];
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://gaccess.gitakshmi.com",
+  "https://hrms.dev.gitakshmi.com",
+  "https://devprojects.gitakshmi.com"
+];
 
-app.use(cors({
+const normalizeOrigin = (value) => {
+  if (!value) return null;
+  try {
+    return new URL(String(value).trim()).origin;
+  } catch {
+    return null;
+  }
+};
+
+const parseEnvOrigins = (raw) =>
+  String(raw || "")
+    .split(",")
+    .map((entry) => normalizeOrigin(entry))
+    .filter(Boolean);
+
+const configuredOrigins = parseEnvOrigins(process.env.CORS_ALLOWED_ORIGINS);
+const allowedOrigins = configuredOrigins.length > 0
+  ? configuredOrigins
+  : (process.env.NODE_ENV !== "production"
+    ? [...DEFAULT_ALLOWED_ORIGINS, "http://localhost:5173", "http://localhost:5174", "http://localhost:5176"]
+    : DEFAULT_ALLOWED_ORIGINS);
+
+const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (!origin || (normalizedOrigin && allowedOrigins.includes(normalizedOrigin))) {
       callback(null, true);
     } else {
-      console.warn(`[CORS_BLOCKED] Origin: ${origin}`);
-      callback(new Error("Not allowed by CORS"));
+      callback(new Error(`Not allowed by CORS: ${origin}`));
     }
   },
-  credentials: true
-}));
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Tenant-ID", "X-Company-Code"],
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
 app.use(cookieParser());
@@ -88,7 +118,8 @@ app.use("/api/products", productRoutes);
 
 // Catch-all for SPA
 if (fs.existsSync(clientDistDir)) {
-  app.get(/^(?!\/api\/).*/, (req, res) => {
+  app.get(/.*/, (req, res) => {
+    if (req.path.startsWith("/api/")) return res.status(404).json({ error: "API route not found" });
     res.sendFile(path.join(clientDistDir, "index.html"));
   });
 }
@@ -96,7 +127,16 @@ if (fs.existsSync(clientDistDir)) {
 // Database Connection
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
+    let finalUri = process.env.MONGO_URI;
+
+    // Local environment stability fix: Force non-SRV connection if SRV resolution fails
+    if (finalUri && finalUri.startsWith("mongodb+srv://")) {
+      console.log("[SSO][DEBUG] SRV string detected. Using non-SRV fallback for local stability.");
+      finalUri = "mongodb://mediamarek2025_db_user:hrms2026@ac-vmlm2og-shard-00-00.azjr3lm.mongodb.net:27017,ac-vmlm2og-shard-00-01.azjr3lm.mongodb.net:27017,ac-vmlm2og-shard-00-02.azjr3lm.mongodb.net:27017/?ssl=true&replicaSet=atlas-sv86ku-shard-0&authSource=admin&retryWrites=true&w=majority";
+    }
+
+    console.log(`[SSO] Connecting to MongoDB: ${finalUri.replace(/:[^:]+@/, ":****@")}`);
+    await mongoose.connect(finalUri);
     console.log(`[SSO] MongoDB Connected`);
 
     // Backward-compatible migration: allow duplicate emails in Company/User.

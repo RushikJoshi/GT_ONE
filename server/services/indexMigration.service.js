@@ -9,11 +9,17 @@ const dropLegacyUniqueIndexesIfExists = async (collectionName, fieldNames = []) 
     console.log(`[MIGRATION] Found ${indexes.length} indexes for ${collectionName}: ${indexes.map(i => i.name).join(", ")}`);
 
     const uniqueLegacyIndexes = indexes.filter(
-      (index) =>
-        index &&
-        index.unique === true &&
-        index.key &&
-        fieldNames.some((fieldName) => Object.prototype.hasOwnProperty.call(index.key, fieldName))
+      (index) => {
+        const isLegacy = index &&
+          index.unique === true &&
+          index.key &&
+          fieldNames.some((fieldName) => Object.prototype.hasOwnProperty.call(index.key, fieldName));
+        
+        if (isLegacy) {
+          console.log(`[MIGRATION] Checking index: ${index.name}, unique: ${!!index.unique}, keys: ${JSON.stringify(index.key)}, isLegacy: ${isLegacy}`);
+        }
+        return isLegacy;
+      }
     );
 
     for (const index of uniqueLegacyIndexes) {
@@ -28,6 +34,6 @@ const dropLegacyUniqueIndexesIfExists = async (collectionName, fieldNames = []) 
 };
 
 export const dropLegacyUniqueEmailIndexes = async () => {
-  await dropLegacyUniqueIndexesIfExists("companies", ["email", "companyEmail", "company_email", "tenantId", "apiKey"]);
+  await dropLegacyUniqueIndexesIfExists("companies", ["email", "companyEmail", "tenantId", "apiKey"]);
   await dropLegacyUniqueIndexesIfExists("users", ["email"]);
 };
