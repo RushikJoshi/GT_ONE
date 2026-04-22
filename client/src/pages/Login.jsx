@@ -9,9 +9,13 @@ function Login() {
   const [searchParams] = useSearchParams();
   const { setUser } = useAuth();
   const [didCheckSession, setDidCheckSession] = useState(false);
+  const HRMS_BASE = "https://hrms.dev.gitakshmi.com";
+  const TMS_BASE = "https://devprojects.gitakshmi.com";
+
   const TOKEN_BRIDGE_ALLOWED_ORIGINS = new Set([
-    "http://localhost:5176",
-    "http://127.0.0.1:5176"
+    "https://hrms.dev.gitakshmi.com",
+    "https://devprojects.gitakshmi.com",
+    "https://gaccess.gitakshmi.com"
   ]);
 
   const markRedirectAttempt = (url) => {
@@ -52,7 +56,11 @@ function Login() {
 
     try {
       const parsed = new URL(url);
-      if (!TOKEN_BRIDGE_ALLOWED_ORIGINS.has(parsed.origin)) {
+      const origin = parsed.origin;
+      // Allow relative paths or allowed origins
+      const isAllowed = TOKEN_BRIDGE_ALLOWED_ORIGINS.has(origin) || origin.endsWith(".gitakshmi.com");
+
+      if (!isAllowed) {
         return url;
       }
       if (!parsed.searchParams.has("token")) {
@@ -83,20 +91,29 @@ function Login() {
     return true;
   };
 
-  const resolveFallbackRedirect = (role) => {
+  const resolveFallbackRedirect = (role, products = []) => {
     const normalizedRole = String(role || "")
       .trim()
       .toLowerCase()
       .replace(/[\s-]+/g, "_");
-    const HRMS_BASE = "http://localhost:5176";
+    
+    const assigned = new Set((products || []).map(p => String(p).toUpperCase()));
+    const hasHrms = assigned.has("HRMS");
+    const hasTms = assigned.has("TMS") || assigned.has("CRM") || assigned.has("PMS");
 
     if (["company_admin", "admin", "hr", "hr_admin", "owner"].includes(normalizedRole)) {
+      if (hasHrms) return `${HRMS_BASE}/tenant/dashboard`;
+      if (hasTms) return `${TMS_BASE}/dashboard`;
       return `${HRMS_BASE}/tenant/dashboard`;
     }
     if (["manager", "team_manager"].includes(normalizedRole)) {
+      if (hasHrms) return `${HRMS_BASE}/tenant/dashboard`;
+      if (hasTms) return `${TMS_BASE}/dashboard`;
       return `${HRMS_BASE}/tenant/dashboard`;
     }
     if (["employee", "user", "staff"].includes(normalizedRole)) {
+      if (hasHrms) return `${HRMS_BASE}/employee/dashboard`;
+      if (hasTms) return `${TMS_BASE}/dashboard`;
       return `${HRMS_BASE}/employee/dashboard`;
     }
 
@@ -203,7 +220,7 @@ function Login() {
           .toLowerCase()
           .replace(/[\s-]+/g, "_");
 
-        const roleRedirect = resolveFallbackRedirect(normalizedRole);
+        const roleRedirect = resolveFallbackRedirect(normalizedRole, nextUser?.products || []);
         if (roleRedirect) {
           if (safeRedirectTo(roleRedirect, { replace: true })) {
             return;
@@ -297,7 +314,7 @@ function Login() {
           }
         }
 
-        const fallbackRedirect = resolveFallbackRedirect(normalizedRole);
+        const fallbackRedirect = resolveFallbackRedirect(normalizedRole, nextUser?.products || []);
         if (fallbackRedirect) {
           if (safeRedirectTo(fallbackRedirect, { replace: false, accessToken })) {
             return;
@@ -363,7 +380,7 @@ function Login() {
         }
       }
 
-      const fallbackRedirect = resolveFallbackRedirect(normalizedRole);
+      const fallbackRedirect = resolveFallbackRedirect(normalizedRole, nextUser?.products || []);
       if (fallbackRedirect) {
         if (safeRedirectTo(fallbackRedirect, { replace: false, accessToken })) {
           return;
