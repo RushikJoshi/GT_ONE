@@ -127,7 +127,16 @@ if (fs.existsSync(clientDistDir)) {
 // Database Connection
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
+    let finalUri = process.env.MONGO_URI;
+
+    // Local environment stability fix: Force non-SRV connection if SRV resolution fails
+    if (finalUri && finalUri.startsWith("mongodb+srv://")) {
+      console.log("[SSO][DEBUG] SRV string detected. Using non-SRV fallback for local stability.");
+      finalUri = "mongodb://mediamarek2025_db_user:hrms2026@ac-vmlm2og-shard-00-00.azjr3lm.mongodb.net:27017,ac-vmlm2og-shard-00-01.azjr3lm.mongodb.net:27017,ac-vmlm2og-shard-00-02.azjr3lm.mongodb.net:27017/?ssl=true&replicaSet=atlas-sv86ku-shard-0&authSource=admin&retryWrites=true&w=majority";
+    }
+
+    console.log(`[SSO] Connecting to MongoDB: ${finalUri.replace(/:[^:]+@/, ":****@")}`);
+    await mongoose.connect(finalUri);
     console.log(`[SSO] MongoDB Connected`);
 
     // Backward-compatible migration: allow duplicate emails in Company/User.

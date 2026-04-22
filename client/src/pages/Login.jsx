@@ -9,14 +9,44 @@ function Login() {
   const [searchParams] = useSearchParams();
   const { setUser } = useAuth();
   const [didCheckSession, setDidCheckSession] = useState(false);
-  const HRMS_BASE = "https://hrms.dev.gitakshmi.com";
-  const TMS_BASE = "https://devprojects.gitakshmi.com";
+  const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const HRMS_BASE = isLocal ? "http://localhost:5176" : "https://hrms.dev.gitakshmi.com";
+  const TMS_BASE = isLocal ? "http://localhost:5173" : "https://devprojects.gitakshmi.com";
 
   const TOKEN_BRIDGE_ALLOWED_ORIGINS = new Set([
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:5175",
+    "http://127.0.0.1:5176",
     "https://hrms.dev.gitakshmi.com",
     "https://devprojects.gitakshmi.com",
     "https://gaccess.gitakshmi.com"
   ]);
+
+  const isLocalOriginUrl = (value) => {
+    try {
+      const parsed = new URL(value);
+      return ["localhost", "127.0.0.1"].includes(parsed.hostname);
+    } catch {
+      return false;
+    }
+  };
+
+  const shouldUseAbsoluteRedirect = (url) => {
+    if (!url || typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+      return false;
+    }
+
+    if (!isLocal) {
+      return true;
+    }
+
+    return isLocalOriginUrl(url);
+  };
 
   const markRedirectAttempt = (url) => {
     try {
@@ -96,7 +126,7 @@ function Login() {
       .trim()
       .toLowerCase()
       .replace(/[\s-]+/g, "_");
-    
+
     const assigned = new Set((products || []).map(p => String(p).toUpperCase()));
     const hasHrms = assigned.has("HRMS");
     const hasTms = assigned.has("TMS") || assigned.has("CRM") || assigned.has("PMS");
@@ -209,7 +239,7 @@ function Login() {
           return;
         }
 
-        if (hasExplicitRedirectUrl) {
+        if (hasExplicitRedirectUrl && shouldUseAbsoluteRedirect(redirect)) {
           if (safeRedirectTo(redirect, { replace: true })) {
             return;
           }
@@ -308,7 +338,7 @@ function Login() {
 
         const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
-        if (typeof redirectUrl === "string" && redirectUrl.startsWith("http")) {
+        if (shouldUseAbsoluteRedirect(redirectUrl)) {
           if (safeRedirectTo(redirectUrl, { replace: false, accessToken })) {
             return;
           }
@@ -374,7 +404,7 @@ function Login() {
 
       const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
-      if (typeof redirectUrl === "string" && redirectUrl.startsWith("http")) {
+      if (shouldUseAbsoluteRedirect(redirectUrl)) {
         if (safeRedirectTo(redirectUrl, { replace: false, accessToken })) {
           return;
         }
