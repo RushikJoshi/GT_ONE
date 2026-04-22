@@ -7,7 +7,7 @@ export const seedInitialData = async () => {
     await Product.findOneAndUpdate(
       { name: productName },
       { $setOnInsert: { name: productName } },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
   }
 

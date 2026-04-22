@@ -42,22 +42,51 @@ app.use(helmet({
 const PORT = process.env.PORT || 5004;
 
 // CORS Configuration
-const allowedOrigins = [
+const DEFAULT_ALLOWED_ORIGINS = [
   "https://gaccess.gitakshmi.com",
   "https://hrms.dev.gitakshmi.com",
   "https://devprojects.gitakshmi.com"
 ];
 
-app.use(cors({
+const normalizeOrigin = (value) => {
+  if (!value) return null;
+  try {
+    return new URL(String(value).trim()).origin;
+  } catch {
+    return null;
+  }
+};
+
+const parseEnvOrigins = (raw) =>
+  String(raw || "")
+    .split(",")
+    .map((entry) => normalizeOrigin(entry))
+    .filter(Boolean);
+
+const configuredOrigins = parseEnvOrigins(process.env.CORS_ALLOWED_ORIGINS);
+const allowedOrigins = configuredOrigins.length > 0
+  ? configuredOrigins
+  : (process.env.NODE_ENV !== "production"
+    ? [...DEFAULT_ALLOWED_ORIGINS, "http://localhost:5173", "http://localhost:5174", "http://localhost:5176"]
+    : DEFAULT_ALLOWED_ORIGINS);
+
+const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+    const normalizedOrigin = normalizeOrigin(origin);
+    if (!origin || (normalizedOrigin && allowedOrigins.includes(normalizedOrigin))) {
       callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS"));
+      callback(new Error(`Not allowed by CORS: ${origin}`));
     }
   },
-  credentials: true
-}));
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Tenant-ID", "X-Company-Code"],
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
 app.use(cookieParser());
@@ -89,7 +118,7 @@ app.use("/api/products", productRoutes);
 
 // Catch-all for SPA
 if (fs.existsSync(clientDistDir)) {
-  app.get("*", (req, res) => {
+  app.get(/.*/, (req, res) => {
     if (req.path.startsWith("/api/")) return res.status(404).json({ error: "API route not found" });
     res.sendFile(path.join(clientDistDir, "index.html"));
   });

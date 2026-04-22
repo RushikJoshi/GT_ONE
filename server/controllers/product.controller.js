@@ -11,7 +11,7 @@ export const listProducts = async (_req, res) => {
         await Product.findOneAndUpdate(
           { name: productName },
           { $setOnInsert: { name: productName } },
-          { upsert: true, new: true }
+          { upsert: true, returnDocument: 'after' }
         );
       }
       products = await Product.find({}).sort({ name: 1 });
