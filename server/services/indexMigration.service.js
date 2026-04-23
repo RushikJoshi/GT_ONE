@@ -34,6 +34,19 @@ const dropLegacyUniqueIndexesIfExists = async (collectionName, fieldNames = []) 
 };
 
 export const dropLegacyUniqueEmailIndexes = async () => {
-  await dropLegacyUniqueIndexesIfExists("companies", ["email", "companyEmail", "tenantId", "apiKey"]);
-  await dropLegacyUniqueIndexesIfExists("users", ["email"]);
+  const collections = ["companies", "users"];
+  for (const collName of collections) {
+    try {
+      const collection = mongoose.connection.collection(collName);
+      const indexes = await collection.indexes();
+      for (const index of indexes) {
+        if (index.unique && index.name !== "_id_") {
+          console.log(`[MIGRATION] FORCE dropping unique index ${collName}.${index.name}`);
+          await collection.dropIndex(index.name);
+        }
+      }
+    } catch (err) {
+      console.warn(`[MIGRATION] Failed to drop indexes for ${collName}: ${err.message}`);
+    }
+  }
 };

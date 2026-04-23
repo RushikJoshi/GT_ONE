@@ -654,8 +654,10 @@ export const verifyLoginOtpChallenge = async ({
   const normalizedEmail = normalizeEmail(email);
   const normalizedRequestId = String(requestId || "").trim();
   const normalizedOtp = String(otp || "").trim();
+  console.log("[OTP] verifyLoginOtpChallenge params:", { normalizedEmail, normalizedRequestId, normalizedOtp, source, tenantId });
 
   if (!normalizedEmail || !normalizedRequestId || !normalizedOtp) {
+    console.warn("[OTP] Validation failed: missing email, requestId, or otp");
     return {
       error: {
         status: 400,

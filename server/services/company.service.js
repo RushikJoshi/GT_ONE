@@ -197,6 +197,13 @@ export const createCompanyWithAdmin = async ({
       hrmsModules: defaultHrms.hrmsModules
     });
   } catch (error) {
+    if (error.code === 11000) {
+      console.error("[COMPANY] Duplicate Key Error (Company):", {
+        message: error.message,
+        keyPattern: error.keyPattern,
+        keyValue: error.keyValue
+      });
+    }
     return { error: mapCreateCompanyError(error) };
   }
 
@@ -212,6 +219,13 @@ export const createCompanyWithAdmin = async ({
       companyId: company._id
     });
   } catch (error) {
+    if (error.code === 11000) {
+      console.error("[COMPANY] Duplicate Key Error (User):", {
+        message: error.message,
+        keyPattern: error.keyPattern,
+        keyValue: error.keyValue
+      });
+    }
     await Company.deleteOne({ _id: company._id });
     return { error: mapCreateCompanyError(error) };
   }
@@ -235,12 +249,19 @@ export const createCompanyWithAdmin = async ({
         }))
       );
     } catch (error) {
-      await Promise.all([
-        User.deleteOne({ _id: companyAdmin._id }),
-        Company.deleteOne({ _id: company._id })
-      ]);
-      return { error: mapCreateCompanyError(error) };
+      if (error.code === 11000) {
+      console.error("[COMPANY] Duplicate Key Error (Product):", {
+        message: error.message,
+        keyPattern: error.keyPattern,
+        keyValue: error.keyValue
+      });
     }
+    await Promise.all([
+      User.deleteOne({ _id: companyAdmin._id }),
+      Company.deleteOne({ _id: company._id })
+    ]);
+    return { error: mapCreateCompanyError(error) };
+  }
   }
 
   const selectedProductNames = productDocs.map((product) => product.name);
