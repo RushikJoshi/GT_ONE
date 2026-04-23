@@ -314,13 +314,20 @@ function Login() {
       const query = redirect ? `?redirect=${encodeURIComponent(redirect)}` : "";
 
       if (isOtpStep) {
-        const res = await api.post(`/auth/verify-otp${query}`, {
+        if (!otpChallenge?.otpRequestId) {
+          setError("OTP session expired. Please try logging in again.");
+          setOtpChallenge(null);
+          return;
+        }
+        const otpPayload = {
           email: otpChallenge.email,
           otp: otpCode.trim(),
           otpRequestId: otpChallenge.otpRequestId,
           otpSource: otpChallenge.otpSource,
           otpTenantId: otpChallenge.otpTenantId
-        });
+        };
+        console.log("[LOGIN] Submitting OTP:", otpPayload);
+        const res = await api.post(`/auth/verify-otp${query}`, otpPayload);
 
         const nextUser = res.data.user;
         setUser(nextUser);
