@@ -1,12 +1,27 @@
 import axios from "axios";
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
+
+const trimTrailingSlash = (value) => String(value || "").replace(/\/+$/, "");
+
 const resolveApiBaseUrl = () => {
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
+  const configuredApiUrl = trimTrailingSlash(import.meta.env.VITE_API_URL);
+  const localApiUrl = trimTrailingSlash(import.meta.env.VITE_LOCAL_API_URL);
+  const localApiPort = String(import.meta.env.VITE_LOCAL_API_PORT || "5004").trim();
+
+  if (LOCAL_HOSTS.has(window.location.hostname)) {
+    if (localApiUrl) {
+      return localApiUrl;
+    }
+
+    const protocol = window.location.protocol || "http:";
+    return `${protocol}//${window.location.hostname}:${localApiPort}/api`;
   }
-  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-    return "/api";
+
+  if (configuredApiUrl) {
+    return configuredApiUrl;
   }
+
   return "https://devgaccess.gitakshmi.com/api";
 };
 
