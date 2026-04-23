@@ -6,6 +6,7 @@ import AssignProducts from "./pages/AssignProducts";
 import Unauthorized from "./pages/Unauthorized";
 import { useAuth } from "./context/AuthContext";
 import SessionGuard from "./components/SessionGuard";
+import { SuperAdminProvider } from "./context/SuperAdminContext";
 
 const ProtectedRoute = ({ children }) => (
   <SessionGuard>{children}</SessionGuard>
@@ -65,61 +66,47 @@ const SuperAdminRoute = ({ children }) => {
 function App() {
   return (
     <Routes>
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <SuperAdminRoute>
-              <Dashboard />
-            </SuperAdminRoute>
-          </ProtectedRoute>
-        }
-      />
       <Route path="/login" element={<Login />} />
       <Route path="/logout" element={<Logout />} />
       <Route path="/unauthorized" element={<Unauthorized />} />
+
+      {/* Super Admin Routes wrapped in a single Provider for data persistence */}
       <Route
-        path="/dashboard"
+        path="/*"
         element={
           <ProtectedRoute>
             <SuperAdminRoute>
-              <Dashboard />
+              <SuperAdminProvider>
+                <Routes>
+                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/companies/:companyId/products" element={<AssignProducts />} />
+                  
+                  {/* Product locked routes (placeholders) */}
+                  <Route
+                    path="/hrms/*"
+                    element={
+                      <ProductRoute product="HRMS">
+                        <div className="center-screen">HRMS app shell mounts here.</div>
+                      </ProductRoute>
+                    }
+                  />
+                  <Route
+                    path="/psa/*"
+                    element={
+                      <ProductRoute product="PSA">
+                        <div className="center-screen">PSA app shell mounts here.</div>
+                      </ProductRoute>
+                    }
+                  />
+                  
+                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                </Routes>
+              </SuperAdminProvider>
             </SuperAdminRoute>
           </ProtectedRoute>
         }
       />
-      {/* Product locked routes (example entry points) */}
-      <Route
-        path="/hrms/*"
-        element={
-          <ProtectedRoute>
-            <ProductRoute product="HRMS">
-              <div className="center-screen">HRMS app shell mounts here.</div>
-            </ProductRoute>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/psa/*"
-        element={
-          <ProtectedRoute>
-            <ProductRoute product="PSA">
-              <div className="center-screen">PSA app shell mounts here.</div>
-            </ProductRoute>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/companies/:companyId/products"
-        element={
-          <ProtectedRoute>
-            <SuperAdminRoute>
-              <AssignProducts />
-            </SuperAdminRoute>
-          </ProtectedRoute>
-        }
-      />
-      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 }

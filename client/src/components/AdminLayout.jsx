@@ -68,6 +68,7 @@ const AdminLayout = ({ children, activeTab, setActiveTab }) => {
         <nav className="sidebar-nav">
           {navItems.map((item) => (
             <button
+              type="button"
               key={item.id}
               className={`nav-item ${activeTab === item.id ? 'active' : ''}`}
               onClick={() => setActiveTab(item.id)}
@@ -89,7 +90,7 @@ const AdminLayout = ({ children, activeTab, setActiveTab }) => {
               <span>Notifications</span>
             </button>
 
-            <button className="sidebar-action" onClick={handleLogout}>
+            <button type="button" className="sidebar-action" onClick={handleLogout}>
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
