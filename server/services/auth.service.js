@@ -1540,6 +1540,11 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
       normalizedCompanyCode = String(
         latestUser.companyCode || company?.code || company?.companyCode || ""
       ).trim();
+    } else if (isSuperRole(roleFromDb)) {
+      // Super Admins operate at the global SSO level and don't need a specific tenant context
+      tenantId = null;
+      companyId = null;
+      normalizedCompanyCode = null;
     } else {
       const tenantContext = await resolveHrmsTenantContext({
         company,
@@ -1555,7 +1560,7 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
       tenantId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsTenantId;
       companyId = requestedApp === "TMS" ? tmsCompanyId : effectiveHrmsCompanyId;
 
-      if (requestedApp === "HRMS" && !isSuperRole(roleFromDb)) {
+      if (requestedApp === "HRMS") {
         if (!tenantId || !companyId) {
           logAuth("tenant_mapping_missing", {
             userId: String(latestUser._id),
