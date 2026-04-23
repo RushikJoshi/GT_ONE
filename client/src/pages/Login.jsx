@@ -639,21 +639,7 @@ function Login() {
                     required
                   />
                 </div>
-                {otpPreviewCode && (
-                  <div
-                    style={{
-                      marginTop: "12px",
-                      padding: "12px 14px",
-                      borderRadius: "14px",
-                      background: "#eff6ff",
-                      border: "1px solid #bfdbfe",
-                      color: "#1d4ed8",
-                      fontSize: "0.95rem"
-                    }}
-                  >
-                    Local OTP preview: <strong style={{ letterSpacing: "0.18em" }}>{otpPreviewCode}</strong>
-                  </div>
-                )}
+
                 <p style={{ marginTop: "10px", color: "#64748b", fontSize: "0.95rem" }}>
                   {otpSecondsLeft > 0
                     ? `This OTP expires in ${otpSecondsLeft}s.`
