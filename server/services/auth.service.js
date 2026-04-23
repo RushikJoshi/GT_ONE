@@ -142,7 +142,7 @@ const buildAppUrlLikeOrigin = (baseUrl, requestOrigin) => {
 };
 
 const getSsoDashboardUrl = (requestOrigin) => {
-  const ssoLoginUrl = process.env.SSO_LOGIN_URL || "https://gaccess.gitakshmi.com/login?redirect=hrms";
+  const ssoLoginUrl = process.env.SSO_LOGIN_URL || "https://devgaccess.gitakshmi.com/login?redirect=hrms";
   const url = new URL(buildAppUrlLikeOrigin(ssoLoginUrl, requestOrigin));
   url.pathname = "/dashboard";
   url.search = "";
@@ -1143,11 +1143,11 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
     const resolvedEmail =
       String(
         employee.email ||
-          employee.Email ||
-          employee.workEmail ||
-          employee.personalEmail ||
-          employee.officialEmail ||
-          ""
+        employee.Email ||
+        employee.workEmail ||
+        employee.personalEmail ||
+        employee.officialEmail ||
+        ""
       )
         .trim()
         .toLowerCase() || normalizedEmail;
@@ -1236,17 +1236,17 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
             const resolvedEmail =
               String(
                 doc.email ||
-                  doc.Email ||
-                  doc.emailId ||
-                  doc.EmailId ||
-                  doc.emailID ||
-                  doc.userEmail ||
-                  doc.user_email ||
-                  doc.workEmail ||
-                  doc.personalEmail ||
-                  doc.officialEmail ||
-                  doc.official_email ||
-                  ""
+                doc.Email ||
+                doc.emailId ||
+                doc.EmailId ||
+                doc.emailID ||
+                doc.userEmail ||
+                doc.user_email ||
+                doc.workEmail ||
+                doc.personalEmail ||
+                doc.officialEmail ||
+                doc.official_email ||
+                ""
               )
                 .trim()
                 .toLowerCase() || normalizedEmail;

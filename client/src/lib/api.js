@@ -5,9 +5,9 @@ const resolveApiBaseUrl = () => {
     return import.meta.env.VITE_API_URL;
   }
   if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-    return "/api"; 
+    return "/api";
   }
-  return "https://gaccess.gitakshmi.com/api";
+  return "https://devgaccess.gitakshmi.com/api";
 };
 
 const api = axios.create({
