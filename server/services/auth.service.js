@@ -76,30 +76,10 @@ const APP_ALIASES = {
 };
 
 const LOCAL_REDIRECT_ALLOWLIST = {
-  hrms: [
-    "http://localhost:5176",
-    "http://localhost:5176/hr",
-    "http://127.0.0.1:5176",
-    "http://127.0.0.1:5176/hr"
-  ],
-  tms: [
-    "http://localhost:5173",
-    "http://localhost:5173/dashboard",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5173/dashboard"
-  ],
-  psa: [
-    "http://localhost:5175",
-    "http://localhost:5175/dashboard",
-    "http://127.0.0.1:5175",
-    "http://127.0.0.1:5175/dashboard"
-  ],
-  dms: [
-    "http://localhost:5177",
-    "http://localhost:5177/dashboard",
-    "http://127.0.0.1:5177",
-    "http://127.0.0.1:5177/dashboard"
-  ]
+  hrms: [],
+  tms: [],
+  psa: [],
+  dms: []
 };
 
 const logAuth = (event, data = {}) => {
@@ -162,7 +142,7 @@ const buildAppUrlLikeOrigin = (baseUrl, requestOrigin) => {
 };
 
 const getSsoDashboardUrl = (requestOrigin) => {
-  const ssoLoginUrl = process.env.SSO_LOGIN_URL || "http://localhost:5174/login?redirect=hrms";
+  const ssoLoginUrl = process.env.SSO_LOGIN_URL || "https://gaccess.gitakshmi.com/login?redirect=hrms";
   const url = new URL(buildAppUrlLikeOrigin(ssoLoginUrl, requestOrigin));
   url.pathname = "/dashboard";
   url.search = "";

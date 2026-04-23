@@ -6,7 +6,7 @@ import { normalizeHrmsModuleSettings, toSparseHrmsEnabledModules } from "../cons
 const TRANSIENT_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 const getHrmsProvisionUrl = () =>
-  process.env.HRMS_PROVISION_URL || "http://localhost:5003/api/sso/provision-tenant";
+  process.env.HRMS_PROVISION_URL || "https://hrms.dev.gitakshmi.com/api/sso/provision-tenant";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

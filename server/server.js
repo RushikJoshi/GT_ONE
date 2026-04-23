@@ -64,11 +64,7 @@ const parseEnvOrigins = (raw) =>
     .filter(Boolean);
 
 const configuredOrigins = parseEnvOrigins(process.env.CORS_ALLOWED_ORIGINS);
-const allowedOrigins = configuredOrigins.length > 0
-  ? configuredOrigins
-  : (process.env.NODE_ENV !== "production"
-    ? [...DEFAULT_ALLOWED_ORIGINS, "http://localhost:5173", "http://localhost:5174", "http://localhost:5176"]
-    : DEFAULT_ALLOWED_ORIGINS);
+const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : DEFAULT_ALLOWED_ORIGINS;
 
 const corsOptions = {
   origin: (origin, callback) => {

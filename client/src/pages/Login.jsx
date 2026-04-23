@@ -9,23 +9,33 @@ function Login() {
   const [searchParams] = useSearchParams();
   const { setUser } = useAuth();
   const [didCheckSession, setDidCheckSession] = useState(false);
-  const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-  const HRMS_BASE = isLocal ? "http://localhost:5176" : "https://hrms.dev.gitakshmi.com";
-  const TMS_BASE = isLocal ? "http://localhost:5173" : "https://devprojects.gitakshmi.com";
+  const HRMS_BASE = import.meta.env.VITE_HRMS_BASE_URL || "https://hrms.dev.gitakshmi.com";
+  const TMS_BASE = import.meta.env.VITE_TMS_BASE_URL || "https://devprojects.gitakshmi.com";
 
-  const TOKEN_BRIDGE_ALLOWED_ORIGINS = new Set([
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5175",
-    "http://localhost:5176",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-    "http://127.0.0.1:5175",
-    "http://127.0.0.1:5176",
-    "https://hrms.dev.gitakshmi.com",
-    "https://devprojects.gitakshmi.com",
-    "https://gaccess.gitakshmi.com"
-  ]);
+  const TOKEN_BRIDGE_ALLOWED_ORIGINS = useMemo(() => {
+    const origins = [
+      "https://hrms.dev.gitakshmi.com",
+      "https://devprojects.gitakshmi.com",
+      "https://gaccess.gitakshmi.com"
+    ];
+
+    [
+      import.meta.env.VITE_HRMS_BASE_URL,
+      import.meta.env.VITE_TMS_BASE_URL,
+      import.meta.env.VITE_PMS_BASE_URL
+    ].forEach(val => {
+      if (val) {
+        try {
+          origins.push(new URL(val).origin);
+        } catch {
+          // invalid url, skip
+        }
+      }
+    });
+    
+    origins.push(window.location.origin);
+    return new Set(origins.filter(Boolean));
+  }, []);
 
   const isLocalOriginUrl = (value) => {
     try {

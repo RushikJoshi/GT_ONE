@@ -1,8 +1,11 @@
 import axios from "axios";
 
 const resolveApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
   if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-    return "/api"; // Let Vite proxy handle it to port 5004
+    return "/api"; 
   }
   return "https://gaccess.gitakshmi.com/api";
 };
