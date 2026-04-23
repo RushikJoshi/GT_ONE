@@ -31,6 +31,16 @@ const getClientIpAddress = (req) =>
   String(req.ip || req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "unknown").trim();
 
 const getRequestOrigin = (req) => req.headers.origin || req.headers.referer || null;
+const isLocalRequest = (req) => {
+  const host = String(req.headers.host || "").toLowerCase();
+  const origin = String(getRequestOrigin(req) || "").toLowerCase();
+  return (
+    host.includes("localhost") ||
+    host.includes("127.0.0.1") ||
+    origin.includes("localhost") ||
+    origin.includes("127.0.0.1")
+  );
+};
 
 const applySessionCookie = ({ req, res, token }) => {
   const cookieOptions = getCookieOptions(req.headers.host);
@@ -196,7 +206,8 @@ export const login = async (req, res) => {
       user: validation.user,
       redirect,
       ipAddress: clientIpAddress,
-      userAgent: req.headers["user-agent"]
+      userAgent: req.headers["user-agent"],
+      allowDevPreview: isLocalRequest(req)
     });
 
     return res.json({
@@ -342,7 +353,8 @@ export const resendOtp = async (req, res) => {
       source: source || otpSource,
       tenantId: tenantId || otpTenantId,
       ipAddress: getClientIpAddress(req),
-      userAgent: req.headers["user-agent"]
+      userAgent: req.headers["user-agent"],
+      allowDevPreview: isLocalRequest(req)
     });
 
     if (challenge?.error) {

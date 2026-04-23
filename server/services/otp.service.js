@@ -4,7 +4,7 @@ import User from "../models/User.js";
 import { sendLoginOtpEmail } from "./email.service.js";
 
 const OTP_EXPIRY_MINUTES = Number(process.env.LOGIN_OTP_EXPIRY_MINUTES || 5);
-const OTP_EXPIRY_SECONDS = Number(process.env.LOGIN_OTP_EXPIRY_SECONDS || 60);
+const OTP_EXPIRY_SECONDS = Number(process.env.LOGIN_OTP_EXPIRY_SECONDS || OTP_EXPIRY_MINUTES * 60 || 60);
 const OTP_EXPIRY_MS = OTP_EXPIRY_SECONDS * 1000;
 const OTP_RESEND_COOLDOWN_SECONDS = Number(process.env.LOGIN_OTP_RESEND_COOLDOWN_SECONDS || 60);
 const OTP_RESEND_COOLDOWN_MS = OTP_RESEND_COOLDOWN_SECONDS * 1000;
@@ -45,38 +45,49 @@ const getHrmsOtpFallbackCollection = () => {
   return db.collection("hrms_login_otps");
 };
 
-const buildOtpState = ({ user, requestId, redirect, otpHash, ipAddress, userAgent, expiresAt }) => ({
-  requestId,
-  otpHash,
-  authSource: user?._source === "hrms_employee" ? "hrms_employee" : "sso_user",
-  redirect: String(redirect || "").trim(),
-  status: "pending",
-  verificationAttempts: 0,
-  maxVerificationAttempts: OTP_MAX_ATTEMPTS,
-  ipAddress: ipAddress ? String(ipAddress).trim() : null,
-  userAgent: userAgent ? String(userAgent).trim() : null,
-  tenantId: user?._tenantId ? String(user._tenantId) : (user?.tenantId ? String(user.tenantId) : null),
-  companyId: user?._companyId ? String(user._companyId) : (user?.companyId ? String(user.companyId) : null),
-  expiresAt,
-  verifiedAt: null,
-  invalidatedAt: null,
-  lastAttemptAt: null,
-  // Store a minimal snapshot so OTP verification can succeed even when the employee
-  // record lives outside `company_<tenantId>.employees` (e.g. `test.users`).
-  userSnapshot: user
-    ? {
-        _id: String(user._id || user.id || ""),
-        id: String(user._id || user.id || ""),
-        name: String(user.name || "").trim(),
-        email: normalizeEmail(user.email),
-        role: String(user.role || "").trim(),
-        tenantId: user?._tenantId ? String(user._tenantId) : (user?.tenantId ? String(user.tenantId) : null),
-        companyId: user?._companyId ? String(user._companyId) : (user?.companyId ? String(user.companyId) : null),
-        _source: user?._source || "hrms_employee"
-      }
-    : null,
-  createdAt: new Date()
-});
+const getSsoOtpFallbackCollection = () => {
+  const db = getSsoDb();
+  if (!db) return null;
+  return db.collection("sso_login_otps");
+};
+
+const buildOtpState = ({ user, requestId, redirect, otpHash, ipAddress, userAgent, expiresAt }) => {
+  const authSource = user?._source === "hrms_employee" ? "hrms_employee" : "sso_user";
+
+  return {
+    requestId,
+    otpHash,
+    authSource,
+    redirect: String(redirect || "").trim(),
+    status: "pending",
+    verificationAttempts: 0,
+    maxVerificationAttempts: OTP_MAX_ATTEMPTS,
+    ipAddress: ipAddress ? String(ipAddress).trim() : null,
+    userAgent: userAgent ? String(userAgent).trim() : null,
+    tenantId: user?._tenantId ? String(user._tenantId) : (user?.tenantId ? String(user.tenantId) : null),
+    companyId: user?._companyId ? String(user._companyId) : (user?.companyId ? String(user.companyId) : null),
+    expiresAt,
+    verifiedAt: null,
+    invalidatedAt: null,
+    lastAttemptAt: null,
+    // Store a minimal snapshot so OTP verification can succeed even when the employee
+    // record lives outside `company_<tenantId>.employees` (e.g. `test.users`).
+    userSnapshot: user
+      ? {
+          _id: String(user._id || user.id || ""),
+          id: String(user._id || user.id || ""),
+          name: String(user.name || "").trim(),
+          email: normalizeEmail(user.email),
+          role: String(user.role || "").trim(),
+          tenantId: user?._tenantId ? String(user._tenantId) : (user?.tenantId ? String(user.tenantId) : null),
+          companyId: user?._companyId ? String(user._companyId) : (user?.companyId ? String(user.companyId) : null),
+          permissions: Array.isArray(user?.permissions) ? user.permissions : [],
+          _source: authSource
+        }
+      : null,
+    createdAt: new Date()
+  };
+};
 
 const getHrmsEmployeeCollection = (tenantId, collectionName = "employees") => {
   const client = getMongoClient();
@@ -142,11 +153,10 @@ const resolveCompanyIdFromTenant = async (tenantId) => {
 
 const persistSsoOtpState = async ({ userId, otpState }) => {
   if (otpState) {
-    await User.collection.updateOne({ _id: userId }, { $set: { loginOtp: otpState } });
-    return;
+    return User.collection.updateOne({ _id: userId }, { $set: { loginOtp: otpState } });
   }
 
-  await User.collection.updateOne({ _id: userId }, { $unset: { loginOtp: "" } });
+  return User.collection.updateOne({ _id: userId }, { $unset: { loginOtp: "" } });
 };
 
 const persistHrmsEmployeeOtpState = async ({ employeeId, tenantId, otpState }) => {
@@ -203,6 +213,37 @@ const persistHrmsOtpFallbackState = async ({ email, requestId, otpState }) => {
   );
 };
 
+const persistSsoOtpFallbackState = async ({ email, requestId, otpState }) => {
+  const collection = getSsoOtpFallbackCollection();
+  if (!collection) {
+    throw new Error("SSO OTP fallback collection is unavailable");
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !requestId) {
+    throw new Error("email and requestId are required");
+  }
+
+  if (!otpState) {
+    await collection.deleteOne({ email: normalizedEmail, requestId: String(requestId).trim() });
+    return;
+  }
+
+  await collection.updateOne(
+    { email: normalizedEmail, requestId: String(requestId).trim() },
+    {
+      $set: {
+        email: normalizedEmail,
+        requestId: String(requestId).trim(),
+        otpState,
+        updatedAt: new Date()
+      },
+      $setOnInsert: { createdAt: new Date() }
+    },
+    { upsert: true }
+  );
+};
+
 const buildSsoUserAdapter = (userDoc) => ({
   email: normalizeEmail(userDoc?.email),
   otpState: userDoc?.loginOtp || null,
@@ -218,6 +259,81 @@ const buildSsoUserAdapter = (userDoc) => ({
     permissions: Array.isArray(userDoc.permissions) ? userDoc.permissions : [],
     _source: "sso_user"
   })
+});
+
+const buildSsoOtpFallbackAdapter = ({ email, requestId, otpState }) => ({
+  email: normalizeEmail(email),
+  otpState: otpState || null,
+  persist: async (nextOtpState) => {
+    const nextRequestId = String(nextOtpState?.requestId || requestId).trim();
+    await persistSsoOtpFallbackState({
+      email,
+      requestId: nextRequestId,
+      otpState: nextOtpState
+    });
+    if (nextRequestId !== String(requestId).trim()) {
+      await persistSsoOtpFallbackState({
+        email,
+        requestId,
+        otpState: null
+      });
+    }
+
+    const fallbackUserId = otpState?.userSnapshot?._id || nextOtpState?.userSnapshot?._id || null;
+    if (fallbackUserId) {
+      try {
+        await persistSsoOtpState({
+          userId: fallbackUserId,
+          otpState: nextOtpState
+        });
+      } catch (_error) {
+        // Keep fallback collection as the source of truth for OTP verification.
+      }
+    }
+  },
+  buildUser: async () => {
+    const snapshot = otpState?.userSnapshot || null;
+    if (snapshot && snapshot.email) {
+      return {
+        _id: snapshot._id,
+        id: snapshot.id,
+        name: snapshot.name,
+        email: snapshot.email,
+        role: String(snapshot.role || "employee").trim().toLowerCase(),
+        companyId: snapshot.companyId || null,
+        tenantId: snapshot.tenantId || null,
+        permissions: Array.isArray(snapshot.permissions) ? snapshot.permissions : [],
+        _source: "sso_user"
+      };
+    }
+
+    const ssoUserDoc = await User.findOne({ email: normalizeEmail(email) }).lean();
+    if (ssoUserDoc) {
+      return {
+        _id: ssoUserDoc._id,
+        id: String(ssoUserDoc._id),
+        name: String(ssoUserDoc.name || "").trim(),
+        email: normalizeEmail(ssoUserDoc.email),
+        role: String(ssoUserDoc.role || "").trim(),
+        companyId: ssoUserDoc.companyId ? String(ssoUserDoc.companyId) : null,
+        tenantId: ssoUserDoc.tenantId ? String(ssoUserDoc.tenantId) : null,
+        permissions: Array.isArray(ssoUserDoc.permissions) ? ssoUserDoc.permissions : [],
+        _source: "sso_user"
+      };
+    }
+
+    return {
+      _id: requestId,
+      id: String(requestId),
+      name: normalizeEmail(email).split("@")[0],
+      email: normalizeEmail(email),
+      role: "employee",
+      companyId: null,
+      tenantId: null,
+      permissions: [],
+      _source: "sso_user"
+    };
+  }
 });
 
 const buildVirtualHrmsUser = ({ employee, tenantId, companyId }) => {
@@ -264,12 +380,21 @@ const buildHrmsEmployeeAdapter = ({ employeeDoc, tenantId }) => ({
 const buildHrmsOtpFallbackAdapter = ({ email, requestId, otpState }) => ({
   email: normalizeEmail(email),
   otpState: otpState || null,
-  persist: async (nextOtpState) =>
-    persistHrmsOtpFallbackState({
+  persist: async (nextOtpState) => {
+    const nextRequestId = String(nextOtpState?.requestId || requestId).trim();
+    await persistHrmsOtpFallbackState({
       email,
-      requestId,
+      requestId: nextRequestId,
       otpState: nextOtpState
-    }),
+    });
+    if (nextRequestId !== String(requestId).trim()) {
+      await persistHrmsOtpFallbackState({
+        email,
+        requestId,
+        otpState: null
+      });
+    }
+  },
   buildUser: async () => {
     const snapshot = otpState?.userSnapshot || null;
     if (snapshot && snapshot.email) {
@@ -326,6 +451,27 @@ const findSsoUserOtpRecord = async ({ email, requestId }) => {
   }
 
   return buildSsoUserAdapter(userDoc);
+};
+
+const findSsoOtpFallbackRecord = async ({ email, requestId }) => {
+  const collection = getSsoOtpFallbackCollection();
+  if (!collection) return null;
+
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedRequestId = String(requestId || "").trim();
+  if (!normalizedEmail || !normalizedRequestId) return null;
+
+  const doc = await collection.findOne(
+    { email: normalizedEmail, requestId: normalizedRequestId },
+    { projection: { otpState: 1, email: 1, requestId: 1 } }
+  );
+  if (!doc?.otpState) return null;
+
+  return buildSsoOtpFallbackAdapter({
+    email: normalizedEmail,
+    requestId: normalizedRequestId,
+    otpState: doc.otpState
+  });
 };
 
 const findHrmsEmployeeOtpRecord = async ({ email, requestId, tenantId }) => {
@@ -407,7 +553,10 @@ const findOtpRecord = async ({ email, requestId, source, tenantId }) => {
   const normalizedSource = normalizeSource(source);
 
   if (normalizedSource === "sso_user") {
-    return findSsoUserOtpRecord({ email, requestId });
+    return (
+      (await findSsoOtpFallbackRecord({ email, requestId })) ||
+      (await findSsoUserOtpRecord({ email, requestId }))
+    );
   }
 
   if (normalizedSource === "hrms_employee") {
@@ -418,8 +567,10 @@ const findOtpRecord = async ({ email, requestId, source, tenantId }) => {
   }
 
   return (
+    (await findSsoOtpFallbackRecord({ email, requestId })) ||
     (await findSsoUserOtpRecord({ email, requestId })) ||
-    (await findHrmsEmployeeOtpRecord({ email, requestId, tenantId }))
+    (await findHrmsEmployeeOtpRecord({ email, requestId, tenantId })) ||
+    (await findHrmsOtpFallbackRecord({ email, requestId }))
   );
 };
 
@@ -427,7 +578,8 @@ export const createLoginOtpChallenge = async ({
   user,
   redirect,
   ipAddress,
-  userAgent
+  userAgent,
+  allowDevPreview = false
 }) => {
   const email = normalizeEmail(user?.email);
   if (!email) {
@@ -477,17 +629,27 @@ export const createLoginOtpChallenge = async ({
       });
     }
   } else {
-    await persistSsoOtpState({
-      userId: user._id,
+    await persistSsoOtpFallbackState({
+      email,
+      requestId,
       otpState
     });
+    try {
+      await persistSsoOtpState({
+        userId: user._id,
+        otpState
+      });
+    } catch (_error) {
+      // Keep fallback collection as the primary OTP store for SSO users.
+    }
   }
 
   try {
     const delivery = await sendLoginOtpEmail({
       to: email,
       otp,
-      expiresInMinutes: Math.max(1, Math.ceil(OTP_EXPIRY_SECONDS / 60))
+      expiresInMinutes: Math.max(1, Math.ceil(OTP_EXPIRY_SECONDS / 60)),
+      allowPreview: allowDevPreview
     });
 
     return {
@@ -523,10 +685,18 @@ export const createLoginOtpChallenge = async ({
         });
       }
     } else {
-      await persistSsoOtpState({
-        userId: user._id,
-        otpState: null
-      });
+      try {
+        await persistSsoOtpState({
+          userId: user._id,
+          otpState: null
+        });
+      } finally {
+        await persistSsoOtpFallbackState({
+          email,
+          requestId,
+          otpState: null
+        });
+      }
     }
 
     throw error;
@@ -539,7 +709,8 @@ export const resendLoginOtpChallenge = async ({
   source,
   tenantId,
   ipAddress,
-  userAgent
+  userAgent,
+  allowDevPreview = false
 }) => {
   const normalizedEmail = normalizeEmail(email);
   const normalizedRequestId = String(requestId || "").trim();
@@ -620,7 +791,8 @@ export const resendLoginOtpChallenge = async ({
     const delivery = await sendLoginOtpEmail({
       to: record.email,
       otp,
-      expiresInMinutes: Math.max(1, Math.ceil(OTP_EXPIRY_SECONDS / 60))
+      expiresInMinutes: Math.max(1, Math.ceil(OTP_EXPIRY_SECONDS / 60)),
+      allowPreview: allowDevPreview
     });
 
     return {

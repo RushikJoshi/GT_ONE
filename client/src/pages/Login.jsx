@@ -9,7 +9,8 @@ function Login() {
   const [searchParams] = useSearchParams();
   const { setUser } = useAuth();
   const [didCheckSession, setDidCheckSession] = useState(false);
-  const HRMS_BASE = import.meta.env.VITE_HRMS_BASE_URL || "https://hrms.dev.gitakshmi.com";
+  const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  const HRMS_BASE = import.meta.env.VITE_HRMS_BASE_URL || (isLocal ? "http://localhost:5176" : "https://hrms.dev.gitakshmi.com");
   const TMS_BASE = import.meta.env.VITE_TMS_BASE_URL || "https://devprojects.gitakshmi.com";
 
   const TOKEN_BRIDGE_ALLOWED_ORIGINS = useMemo(() => {
@@ -192,6 +193,7 @@ function Login() {
   const [otpSecondsLeft, setOtpSecondsLeft] = useState(0);
   const [resendSecondsLeft, setResendSecondsLeft] = useState(0);
   const isOtpStep = Boolean(otpChallenge?.otpRequestId);
+  const otpPreviewCode = otpChallenge?.devOtpPreview || "";
 
   useEffect(() => {
     if (!isOtpStep) {
@@ -439,7 +441,10 @@ function Login() {
       if (isOtpStep && requestError?.response?.data?.reason === "otp_expired") {
         setOtpSecondsLeft(0);
       }
-      const message = requestError?.response?.data?.message || "Login failed";
+      const message =
+        requestError?.response?.data?.message ||
+        requestError?.message ||
+        "Login failed";
       setError(message);
     } finally {
       setLoading(false);
@@ -634,6 +639,21 @@ function Login() {
                     required
                   />
                 </div>
+                {otpPreviewCode && (
+                  <div
+                    style={{
+                      marginTop: "12px",
+                      padding: "12px 14px",
+                      borderRadius: "14px",
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      color: "#1d4ed8",
+                      fontSize: "0.95rem"
+                    }}
+                  >
+                    Local OTP preview: <strong style={{ letterSpacing: "0.18em" }}>{otpPreviewCode}</strong>
+                  </div>
+                )}
                 <p style={{ marginTop: "10px", color: "#64748b", fontSize: "0.95rem" }}>
                   {otpSecondsLeft > 0
                     ? `This OTP expires in ${otpSecondsLeft}s.`

@@ -19,7 +19,8 @@ const hasGmailConfig = () =>
 const allowJsonPreviewTransport = () =>
   !isProduction() && isTruthy(process.env.ALLOW_DEV_JSON_EMAIL);
 
-const allowDevOtpPreview = () => {
+const allowDevOtpPreview = ({ force = false } = {}) => {
+  if (force) return true;
   if (isProduction()) return false;
   const configured = String(process.env.ALLOW_DEV_OTP_IN_RESPONSE || "").trim().toLowerCase();
   if (!configured) return true; // default ON in non-production
@@ -141,7 +142,7 @@ const getMailFrom = () =>
       "Gitakshmi One <no-reply@gitakshmi.com>"
   ).trim();
 
-export const sendLoginOtpEmail = async ({ to, otp, expiresInMinutes }) => {
+export const sendLoginOtpEmail = async ({ to, otp, expiresInMinutes, allowPreview = false }) => {
   const normalizedTo = String(to || "").trim().toLowerCase();
   if (!normalizedTo) {
     throw createMailError({
@@ -197,7 +198,7 @@ export const sendLoginOtpEmail = async ({ to, otp, expiresInMinutes }) => {
       deliveryMode: descriptor.type,
       // In non-production, allow returning the OTP for debugging/dev UX when enabled.
       // This helps when SMTP delivery is slow or unreliable during local testing.
-      previewOtp: allowDevOtpPreview() ? otp : null
+      previewOtp: allowDevOtpPreview({ force: allowPreview }) ? otp : null
     };
   } catch (error) {
     throw createMailError({
