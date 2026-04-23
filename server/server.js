@@ -1,6 +1,6 @@
+import "dotenv/config";
 import express from "express";
 import mongoose from "mongoose";
-import dotenv from "dotenv";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
@@ -13,7 +13,7 @@ import productRoutes from "./routes/product.routes.js";
 import { seedInitialData } from "./services/seed.service.js";
 import { dropLegacyUniqueEmailIndexes } from "./services/indexMigration.service.js";
 
-dotenv.config();
+
 
 const app = express();
 app.set("trust proxy", 1);
