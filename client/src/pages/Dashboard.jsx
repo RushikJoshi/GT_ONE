@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import api from "../lib/api";
 import { appendActivity, readActivities } from "../lib/activityLog";
 import AdminLayout from "../components/AdminLayout";
+import { useSuperAdmin } from "../context/SuperAdminContext";
 
 const defaultCreateForm = {
   name: "",
@@ -54,15 +55,23 @@ const DISTRICT_AUTOFILL = {
 function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("company");
-  const [products, setProducts] = useState([]);
-  const [companies, setCompanies] = useState([]);
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState(location.state?.activeTab || "company");
+
+  const {
+    products,
+    companies,
+    loading,
+    error,
+    loadData,
+    setCompanies,
+    setError
+  } = useSuperAdmin();
+
   const [form, setForm] = useState(defaultCreateForm);
   const [companyLogoPreview, setCompanyLogoPreview] = useState("");
-  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
 
   const productNames = useMemo(() => products.map((item) => item.name), [products]);
   const selectableProductNames = useMemo(
@@ -87,28 +96,20 @@ function Dashboard() {
     )];
   };
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      const [productsRes, companiesRes] = await Promise.all([
-        api.get("/products"),
-        api.get("/companies")
-      ]);
-      setProducts(productsRes.data.products || []);
-      setCompanies(companiesRes.data.companies || []);
-    } catch (requestError) {
-      setError(requestError?.response?.data?.message || "Failed to load dashboard data");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
+
+  // Sync activeTab if location state changes (e.g. sidebar click from other page)
+  useEffect(() => {
+    if (location.state?.activeTab) {
+      setActiveTab(location.state.activeTab);
+      // Clear state to avoid re-triggering on unrelated renders
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, navigate, location.pathname]);
 
   // When user opens MODULES tab, jump directly to the manage screen (2nd screenshot UI).
-  // "Change Company" on that page can bring them back to list/dashboard.
   const didAutoOpenModulesRef = React.useRef(false);
   useEffect(() => {
     if (activeTab !== "products") return;
@@ -247,6 +248,7 @@ function Dashboard() {
   const [dashboardCompanyPage, setDashboardCompanyPage] = useState(1);
   const [expandedCompanyProducts, setExpandedCompanyProducts] = useState(() => new Set());
   const [currentActivityPage, setCurrentActivityPage] = useState(1);
+  const [selectedActivity, setSelectedActivity] = useState(null);
   const [activitySearch, setActivitySearch] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [productTabCompany, setProductTabCompany] = useState(null);
@@ -286,9 +288,9 @@ function Dashboard() {
 
   const toggleEditProduct = (pName) => {
     if (!isEditing) return;
-    setEditProducts(prev => 
-      prev.includes(pName) 
-        ? prev.filter(p => p !== pName) 
+    setEditProducts(prev =>
+      prev.includes(pName)
+        ? prev.filter(p => p !== pName)
         : [...prev, pName]
     );
   };
@@ -300,15 +302,15 @@ function Dashboard() {
       const res = await api.put(`/companies/${selectedCompany._id}/products`, {
         products: editProducts
       });
-      
+
       // Update local companies state
-      setCompanies(prev => prev.map(c => 
+      setCompanies(prev => prev.map(c =>
         c._id === selectedCompany._id ? { ...c, products: editProducts } : c
       ));
-      
+
       // Update selected company
       setSelectedCompany(prev => ({ ...prev, products: editProducts }));
-      
+
       setIsEditing(false);
       setMessage("Configuration updated successfully");
       setTimeout(() => setMessage(""), 3000);
@@ -373,19 +375,19 @@ function Dashboard() {
       setSubmitting(true);
       const previousSnapshot = editCompany
         ? {
-            name: editCompany?.name,
-            email: editCompany?.email,
-            adminName: editCompany?.admin?.name || null,
-            phone: editCompany?.phone || null,
-            companyType: editCompany?.companyType || null,
-            gstNumber: editCompany?.gstNumber || null,
-            panNumber: editCompany?.panNumber || null,
-            registrationNo: editCompany?.registrationNo || null,
-            country: editCompany?.country || null,
-            state: editCompany?.state || null,
-            officeAddress: editCompany?.officeAddress || null,
-            subCompanyLimit: editCompany?.subCompanyLimit ?? null
-          }
+          name: editCompany?.name,
+          email: editCompany?.email,
+          adminName: editCompany?.admin?.name || null,
+          phone: editCompany?.phone || null,
+          companyType: editCompany?.companyType || null,
+          gstNumber: editCompany?.gstNumber || null,
+          panNumber: editCompany?.panNumber || null,
+          registrationNo: editCompany?.registrationNo || null,
+          country: editCompany?.country || null,
+          state: editCompany?.state || null,
+          officeAddress: editCompany?.officeAddress || null,
+          subCompanyLimit: editCompany?.subCompanyLimit ?? null
+        }
         : null;
       const normalizedName = String(editForm.name || "").trim();
       const normalizedEmail = String(editForm.email || "")
@@ -437,12 +439,12 @@ function Dashboard() {
         const mergeCompanyForUi = (c) =>
           c?._id === updated._id
             ? {
-                ...c,
-                ...updated,
-                status: updated.isActive ? "ACTIVE" : "INACTIVE",
-                products: nextProducts,
-                admin: c?.admin ? { ...c.admin, name: editForm.adminName || c.admin.name } : c.admin
-              }
+              ...c,
+              ...updated,
+              status: updated.isActive ? "ACTIVE" : "INACTIVE",
+              products: nextProducts,
+              admin: c?.admin ? { ...c.admin, name: editForm.adminName || c.admin.name } : c.admin
+            }
             : c;
 
         // Update list + any selected/active views so UI reflects saved edits immediately.
@@ -565,13 +567,15 @@ function Dashboard() {
   const renderTabContent = () => {
     switch (activeTab) {
       case "dashboard":
-        const activeCompanies = companies.filter(c => (c.products || []).length > 0).length;
+        const activeCompanies = companies.filter(c => (c.products || []).filter(p => !["PMS", "PSA"].includes(String(p).toUpperCase())).length > 0).length;
         const inactiveCompanies = companies.length - activeCompanies;
-        
-        const productCounts = products.map(p => ({
-          name: p.name,
-          count: companies.filter(c => (c.products || []).includes(p.name)).length
-        }));
+
+        const productCounts = products
+          .filter(p => !["PMS", "PSA"].includes(String(p.name || "").toUpperCase()))
+          .map(p => ({
+            name: p.name,
+            count: companies.filter(c => (c.products || []).includes(p.name)).length
+          }));
 
         return (
           <div style={{ display: 'grid', gap: '16px' }}>
@@ -611,13 +615,13 @@ function Dashboard() {
                   {productCounts.map(item => (
                     <div key={item.name}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontSize: '0.75rem' }}>
-                         <span style={{ fontWeight: 600 }}>{item.name}</span>
-                         <span className="muted">{item.count} Cos</span>
+                        <span style={{ fontWeight: 600 }}>{item.name}</span>
+                        <span className="muted">{item.count} Cos</span>
                       </div>
                       <div style={{ height: '6px', background: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
-                        <div style={{ 
-                          height: '100%', 
-                          background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)', 
+                        <div style={{
+                          height: '100%',
+                          background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)',
                           width: `${companies.length ? (item.count / companies.length) * 100 : 0}%`,
                           transition: 'width 1s ease-out'
                         }} />
@@ -629,8 +633,8 @@ function Dashboard() {
 
               <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                 <div style={{ textAlign: 'center' }}>
-                  <div style={{ 
-                    width: '48px', height: '48px', background: '#dcfce7', color: '#166534', 
+                  <div style={{
+                    width: '48px', height: '48px', background: '#dcfce7', color: '#166534',
                     borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
                     margin: '0 auto 10px'
                   }}>
@@ -648,8 +652,8 @@ function Dashboard() {
             <div className="card" style={{ padding: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <h3 style={{ fontSize: '0.95rem' }}>Registered Entities</h3>
-                <button 
-                  className="link-btn" 
+                <button
+                  className="link-btn"
                   style={{ background: '#f1f5f9', color: '#1e40af', padding: '4px 10px', fontSize: '0.7rem', borderRadius: '6px', fontWeight: 700 }}
                   onClick={() => {
                     setActiveTab('company');
@@ -668,83 +672,86 @@ function Dashboard() {
 
                 return (
                   <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px' }}>
-                {paged.map((company) => (
-                  <div 
-                    key={company._id} 
-                    onClick={() => setSelectedCompany(company)}
-                    style={{ 
-                      padding: '10px', background: '#ffffff', borderRadius: '10px', 
-                      border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '10px',
-                      cursor: 'pointer', transition: 'transform 0.2s',
-                    }}
-                    onMouseOver={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
-                    onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                  >
-                    <div style={{ 
-                      width: '32px', height: '32px', background: '#f1f5f9', color: '#1e40af', 
-                      borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.8rem'
-                    }}>
-                      {(company?.name || "?")[0]}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px' }}>
+                      {paged.map((company) => {
+                        const displayModules = (company.products || []).filter(p => !["PMS", "PSA"].includes(String(p).toUpperCase()));
+                        return (
+                          <div
+                            key={company._id}
+                            onClick={() => setSelectedCompany(company)}
+                            style={{
+                              padding: '10px', background: '#ffffff', borderRadius: '10px',
+                              border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '10px',
+                              cursor: 'pointer', transition: 'transform 0.2s',
+                            }}
+                            onMouseOver={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                            onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                          >
+                            <div style={{
+                              width: '32px', height: '32px', background: '#f1f5f9', color: '#1e40af',
+                              borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.8rem'
+                            }}>
+                              {(company?.name || "?")[0]}
+                            </div>
+                            <div style={{ flex: 1, overflow: 'hidden' }}>
+                              <h4 style={{ margin: 0, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
+                              <p className="muted" style={{ fontSize: '0.7rem', margin: 0 }}>{displayModules.length} Modules</p>
+                            </div>
+                            {displayModules.length > 0 ? (
+                              <div style={{ width: '6px', height: '6px', background: '#22c55e', borderRadius: '50%' }} />
+                            ) : (
+                              <div style={{ width: '6px', height: '6px', background: '#cbd5e1', borderRadius: '50%' }} />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                    <div style={{ flex: 1, overflow: 'hidden' }}>
-                      <h4 style={{ margin: 0, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
-                      <p className="muted" style={{ fontSize: '0.7rem', margin: 0 }}>{(company.products || []).length} Modules</p>
-                    </div>
-                    {(company.products || []).length > 0 ? (
-                      <div style={{ width: '6px', height: '6px', background: '#22c55e', borderRadius: '50%' }} />
-                    ) : (
-                      <div style={{ width: '6px', height: '6px', background: '#cbd5e1', borderRadius: '50%' }} />
+
+                    {((companies || []).length > companiesPerPage) && (
+                      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 10, marginTop: 14 }}>
+                        <button
+                          type="button"
+                          disabled={safePage === 1}
+                          onClick={() => setDashboardCompanyPage((p) => Math.max(1, p - 1))}
+                          style={{
+                            minWidth: 44,
+                            height: 40,
+                            borderRadius: 12,
+                            border: "1px solid #e2e8f0",
+                            background: safePage === 1 ? "#f8fafc" : "#ffffff",
+                            color: "#64748b",
+                            fontWeight: 800,
+                            fontSize: "1rem",
+                            cursor: safePage === 1 ? "not-allowed" : "pointer"
+                          }}
+                        >
+                          ‹
+                        </button>
+
+                        <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "#475569" }}>
+                          Page {safePage} of {totalPages}
+                        </span>
+
+                        <button
+                          type="button"
+                          disabled={safePage === totalPages}
+                          onClick={() => setDashboardCompanyPage((p) => Math.min(totalPages, p + 1))}
+                          style={{
+                            minWidth: 44,
+                            height: 40,
+                            borderRadius: 12,
+                            border: "1px solid #e2e8f0",
+                            background: safePage === totalPages ? "#f8fafc" : "#ffffff",
+                            color: "#64748b",
+                            fontWeight: 800,
+                            fontSize: "1rem",
+                            cursor: safePage === totalPages ? "not-allowed" : "pointer"
+                          }}
+                        >
+                          ›
+                        </button>
+                      </div>
                     )}
-                  </div>
-                ))}
-              </div>
-
-              {((companies || []).length > companiesPerPage) && (
-                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 10, marginTop: 14 }}>
-                  <button
-                    type="button"
-                    disabled={safePage === 1}
-                    onClick={() => setDashboardCompanyPage((p) => Math.max(1, p - 1))}
-                    style={{
-                      minWidth: 44,
-                      height: 40,
-                      borderRadius: 12,
-                      border: "1px solid #e2e8f0",
-                      background: safePage === 1 ? "#f8fafc" : "#ffffff",
-                      color: "#64748b",
-                      fontWeight: 800,
-                      fontSize: "1rem",
-                      cursor: safePage === 1 ? "not-allowed" : "pointer"
-                    }}
-                  >
-                    ‹
-                  </button>
-
-                  <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "#475569" }}>
-                    Page {safePage} of {totalPages}
-                  </span>
-
-                  <button
-                    type="button"
-                    disabled={safePage === totalPages}
-                    onClick={() => setDashboardCompanyPage((p) => Math.min(totalPages, p + 1))}
-                    style={{
-                      minWidth: 44,
-                      height: 40,
-                      borderRadius: 12,
-                      border: "1px solid #e2e8f0",
-                      background: safePage === totalPages ? "#f8fafc" : "#ffffff",
-                      color: "#64748b",
-                      fontWeight: 800,
-                      fontSize: "1rem",
-                      cursor: safePage === totalPages ? "not-allowed" : "pointer"
-                    }}
-                  >
-                    ›
-                  </button>
-                </div>
-              )}
                   </>
                 );
               })()}
@@ -752,57 +759,57 @@ function Dashboard() {
 
             {/* Selection Modal */}
             {selectedCompany && (
-               <div style={{ 
-                 position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', 
-                 zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' 
-               }} onClick={() => setSelectedCompany(null)}>
-                  <div style={{ 
-                    background: 'white', padding: '32px', borderRadius: '20px', width: '90%', maxWidth: '500px',
-                    boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', animation: 'fadeInDown 0.3s ease-out'
-                  }} onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                      <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b' }}>Company Profile</h2>
-                      <button onClick={() => setSelectedCompany(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer' }}>✕</button>
-                    </div>
-
-                    <div style={{ display: 'grid', gap: '20px' }}>
-                        <div>
-                          <p className="muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Entity Name</p>
-                          <strong style={{ fontSize: '1.25rem' }}>{selectedCompany.name}</strong>
-                        </div>
-                        <div>
-                          <p className="muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Contact Email</p>
-                          <strong>{selectedCompany.email}</strong>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', padding: '16px', background: '#f8fafc', borderRadius: '12px' }}>
-                          <div>
-                            <p className="muted" style={{ fontSize: '0.7rem', marginBottom: '2px' }}>Admin Name</p>
-                            <span style={{ fontWeight: 600 }}>{selectedCompany.admin?.name || "N/A"}</span>
-                          </div>
-                          <div>
-                            <p className="muted" style={{ fontSize: '0.7rem', marginBottom: '2px' }}>Admin Email</p>
-                            <span style={{ fontWeight: 600 }}>{selectedCompany.admin?.email || "N/A"}</span>
-                          </div>
-                        </div>
-                        <div>
-                          <p className="muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Active Modules</p>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                             {selectedCompany.products?.length > 0 ? selectedCompany.products.map(p => (
-                               <span key={p} className="status-pill status-active">{p}</span>
-                             )) : <span className="muted">No products assigned yet.</span>}
-                          </div>
-                        </div>
-                        <Link 
-                          to={`/companies/${selectedCompany._id}/products`} 
-                          onClick={() => setSelectedCompany(null)}
-                          className="login-button" 
-                          style={{ textAlign: 'center', display: 'block' }}
-                        >
-                          Modify Configurations
-                        </Link>
-                    </div>
+              <div style={{
+                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)',
+                zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)'
+              }} onClick={() => setSelectedCompany(null)}>
+                <div style={{
+                  background: 'white', padding: '32px', borderRadius: '20px', width: '90%', maxWidth: '500px',
+                  boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', animation: 'fadeInDown 0.3s ease-out'
+                }} onClick={e => e.stopPropagation()}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                    <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b' }}>Company Profile</h2>
+                    <button onClick={() => setSelectedCompany(null)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer' }}>✕</button>
                   </div>
-               </div>
+
+                  <div style={{ display: 'grid', gap: '20px' }}>
+                    <div>
+                      <p className="muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Entity Name</p>
+                      <strong style={{ fontSize: '1.25rem' }}>{selectedCompany.name}</strong>
+                    </div>
+                    <div>
+                      <p className="muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Contact Email</p>
+                      <strong>{selectedCompany.email}</strong>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', padding: '16px', background: '#f8fafc', borderRadius: '12px' }}>
+                      <div>
+                        <p className="muted" style={{ fontSize: '0.7rem', marginBottom: '2px' }}>Admin Name</p>
+                        <span style={{ fontWeight: 600 }}>{selectedCompany.admin?.name || "N/A"}</span>
+                      </div>
+                      <div>
+                        <p className="muted" style={{ fontSize: '0.7rem', marginBottom: '2px' }}>Admin Email</p>
+                        <span style={{ fontWeight: 600 }}>{selectedCompany.admin?.email || "N/A"}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Active Modules</p>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {selectedCompany.products?.length > 0 ? selectedCompany.products.map(p => (
+                          <span key={p} className="status-pill status-active">{p}</span>
+                        )) : <span className="muted">No products assigned yet.</span>}
+                      </div>
+                    </div>
+                    <Link
+                      to={`/companies/${selectedCompany._id}/products`}
+                      onClick={() => setSelectedCompany(null)}
+                      className="login-button"
+                      style={{ textAlign: 'center', display: 'block' }}
+                    >
+                      Modify Configurations
+                    </Link>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         );
@@ -811,10 +818,10 @@ function Dashboard() {
           const searchValue = String(companySearch || "").trim().toLowerCase();
           const filteredCompanies = searchValue
             ? companies.filter((company) => {
-                const name = String(company?.name || "").toLowerCase();
-                const code = String(company?.code || company?.companyCode || "").toLowerCase();
-                return name.includes(searchValue) || code.includes(searchValue);
-              })
+              const name = String(company?.name || "").toLowerCase();
+              const code = String(company?.code || company?.companyCode || "").toLowerCase();
+              return name.includes(searchValue) || code.includes(searchValue);
+            })
             : companies;
 
           const companiesPerPage = 10;
@@ -850,57 +857,57 @@ function Dashboard() {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'transparent', padding: '0 0 6px', borderRadius: 0, border: 'none' }}>
-                 <div style={{ flex: 1, maxWidth: '520px' }}>
-                    <input
-                      value={companySearch}
-                      onChange={(e) => {
-                        setCompanySearch(e.target.value);
-                        setCompanyPage(1);
-                      }}
-                      placeholder="Search by company name or code"
-                      style={{
-                        width: '100%',
-                        padding: '12px 14px',
-                        borderRadius: '12px',
-                        border: '1px solid #e2e8f0',
-                        background: '#ffffff',
-                        outline: 'none',
-                        fontWeight: 600,
-                        color: '#0f172a'
-                      }}
-                    />
-                 </div>
-                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <button 
-                      onClick={() => setShowCreateModal(true)}
-                      style={{ 
-                        background: '#2563eb', color: 'white', padding: '10px 16px', borderRadius: '10px', 
-                        fontWeight: 800, fontSize: '0.85rem', border: 'none', cursor: 'pointer', 
-                        display: 'flex', alignItems: 'center', gap: '8px'
-                      }}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                      </svg>
-                      Create Company
-                    </button>
-                 </div>
+                <div style={{ flex: 1, maxWidth: '520px' }}>
+                  <input
+                    value={companySearch}
+                    onChange={(e) => {
+                      setCompanySearch(e.target.value);
+                      setCompanyPage(1);
+                    }}
+                    placeholder="Search by company name or code"
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: '12px',
+                      border: '1px solid #e2e8f0',
+                      background: '#ffffff',
+                      outline: 'none',
+                      fontWeight: 600,
+                      color: '#0f172a'
+                    }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                  <button
+                    onClick={() => setShowCreateModal(true)}
+                    style={{
+                      background: '#2563eb', color: 'white', padding: '10px 16px', borderRadius: '10px',
+                      fontWeight: 800, fontSize: '0.85rem', border: 'none', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: '8px'
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                    Create Company
+                  </button>
+                </div>
               </div>
 
               <div className="card" style={{ padding: '0', overflow: 'hidden', border: '1px solid #eef2f6', borderRadius: 0 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 120px 1.2fr 1fr 120px 200px', padding: '10px 24px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', gap: '12px' }}>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Company Name</div>
-                   <div style={{ fontSize: '10px', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Code</div>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Company Mail</div>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Products</div>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Status</div>
-                   <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', textAlign: 'right' }}>Action</div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Company Name</div>
+                  <div style={{ fontSize: '10px', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Code</div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Company Mail</div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Products</div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase' }}>Status</div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', textAlign: 'right' }}>Action</div>
                 </div>
                 <div style={{ overflow: 'visible' }}>
                   {pagedCompanies.map((company) => (
-                    <div 
-                      key={company._id} 
-                      style={{ 
+                    <div
+                      key={company._id}
+                      style={{
                         display: 'grid',
                         gridTemplateColumns: '1.3fr 120px 1.2fr 1fr 120px 200px',
                         gap: '12px',
@@ -913,16 +920,16 @@ function Dashboard() {
                       onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                         <div style={{ 
-                           width: '36px', height: '36px', background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', 
-                           color: '#2563eb', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                           fontWeight: 800, fontSize: '0.95rem' 
-                         }}>
-                           {(company?.name || "?")[0]}
-                         </div>
-                         <div style={{ overflow: 'hidden' }}>
-                           <h4 style={{ margin: 0, fontSize: '12px', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
-                         </div>
+                        <div style={{
+                          width: '36px', height: '36px', background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+                          color: '#2563eb', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontWeight: 800, fontSize: '0.95rem'
+                        }}>
+                          {(company?.name || "?")[0]}
+                        </div>
+                        <div style={{ overflow: 'hidden' }}>
+                          <h4 style={{ margin: 0, fontSize: '12px', fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
+                        </div>
                       </div>
 
                       <div style={{ fontSize: '10px', fontWeight: 800, color: '#0f172a' }}>
@@ -1194,124 +1201,124 @@ function Dashboard() {
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'fadeInRight 0.3s ease-out' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-               <button 
+              <button
                 onClick={() => setSelectedCompany(null)}
-                style={{ 
-                  background: 'transparent', color: '#1e293b', width: '44px', height: '44px', borderRadius: '14px', 
+                style={{
+                  background: 'transparent', color: '#1e293b', width: '44px', height: '44px', borderRadius: '14px',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer',
                   transition: 'all 0.2s'
                 }}
                 onMouseOver={(e) => (e.currentTarget.style.background = '#f8fafc')}
                 onMouseOut={(e) => (e.currentTarget.style.background = 'transparent')}
-               >
-                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                   <path d="M19 12H5M12 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
-                 </svg>
-               </button>
-               <div>
-                  <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>{selectedCompany.name}</h2>
-               </div>
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                  <path d="M19 12H5M12 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <div>
+                <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e293b', margin: 0 }}>{selectedCompany.name}</h2>
+              </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) 1fr', gap: '20px', alignItems: 'start' }}>
-               {/* Content Area */}
-               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                  {/* Module Management */}
-                  <div className="card" style={{ padding: '24px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                       <div>
-                          <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: '#1e293b' }}>GT Product</h3>
-                       </div>
-                       <div style={{ display: 'flex', gap: '10px' }}>
-                          {isEditing ? (
-                            <>
-                              <button onClick={() => setIsEditing(false)} style={{ background: '#f1f5f9', color: '#64748b', border: 'none', padding: '10px 20px', borderRadius: '12px', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer' }}>Cancel</button>
-                              <button onClick={saveProductChanges} style={{ background: '#059669', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '12px', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', boxShadow: '0 4px 10px rgba(5, 150, 105, 0.2)' }}>{submitting ? 'Applying...' : 'Apply Changes'}</button>
-                            </>
-                          ) : (
-                            <button onClick={startEditing} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '12px', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', boxShadow: '0 4px 10px rgba(37, 99, 235, 0.2)' }}>Edit Configuration</button>
-                          )}
-                       </div>
+              {/* Content Area */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* Module Management */}
+                <div className="card" style={{ padding: '24px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                    <div>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: '#1e293b' }}>GT Product</h3>
                     </div>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      {isEditing ? (
+                        <>
+                          <button onClick={() => setIsEditing(false)} style={{ background: '#f1f5f9', color: '#64748b', border: 'none', padding: '10px 20px', borderRadius: '12px', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer' }}>Cancel</button>
+                          <button onClick={saveProductChanges} style={{ background: '#059669', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '12px', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', boxShadow: '0 4px 10px rgba(5, 150, 105, 0.2)' }}>{submitting ? 'Applying...' : 'Apply Changes'}</button>
+                        </>
+                      ) : (
+                        <button onClick={startEditing} style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 20px', borderRadius: '12px', fontWeight: 800, fontSize: '0.8rem', cursor: 'pointer', boxShadow: '0 4px 10px rgba(37, 99, 235, 0.2)' }}>Edit Configuration</button>
+                      )}
+                    </div>
+                  </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
-                       {products
-                         .filter((p) => {
-                           const upper = String(p?.name || "").trim().toUpperCase();
-                           return upper !== "PMS" && upper !== "PSA";
-                         })
-                         .map((p) => {
-                         const isActive = isEditing 
-                            ? editProducts.includes(p.name)
-                            : (selectedCompany.products || []).includes(p.name);
-                         
-                         return (
-                            <div 
-                              key={p._id} 
-                              onClick={() => toggleEditProduct(p.name)}
-                              style={{ 
-                                padding: '20px', borderRadius: '24px', border: '2px solid',
-                                borderColor: isActive ? '#22c55e' : '#f1f5f9',
-                                background: isActive ? '#f0fdf4' : '#ffffff',
-                                cursor: isEditing ? 'pointer' : 'default', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                                position: 'relative'
-                              }}
-                            >
-                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                                  <div style={{ width: '40px', height: '40px', background: isActive ? '#dcfce7' : '#f8fafc', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isActive ? '#166534' : '#94a3b8' }}>
-                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                        <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" strokeLinecap="round" strokeLinejoin="round" />
-                                     </svg>
-                                  </div>
-                                  {isEditing && (
-                                     <div style={{ 
-                                       width: '20px', height: '20px', borderRadius: '50%', border: '2px solid',
-                                       borderColor: isActive ? '#22c55e' : '#cbd5e1', background: isActive ? '#22c55e' : 'transparent',
-                                       display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                     }}>
-                                       {isActive && <span style={{ color: 'white', fontSize: '10px', fontWeight: 900 }}>✓</span>}
-                                     </div>
-                                  )}
-                               </div>
-                               <h4 style={{ margin: '0 0 4px 0', fontSize: '0.95rem', fontWeight: 800, color: '#1e293b' }}>{p.name}</h4>
-                               <div style={{ fontSize: '0.75rem', fontWeight: 700, color: isActive ? '#059669' : '#94a3b8' }}>
-                                 {isActive ? 'License Active' : 'Not Licensed'}
-                               </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' }}>
+                    {products
+                      .filter((p) => {
+                        const upper = String(p?.name || "").trim().toUpperCase();
+                        return upper !== "PMS" && upper !== "PSA";
+                      })
+                      .map((p) => {
+                        const isActive = isEditing
+                          ? editProducts.includes(p.name)
+                          : (selectedCompany.products || []).includes(p.name);
+
+                        return (
+                          <div
+                            key={p._id}
+                            onClick={() => toggleEditProduct(p.name)}
+                            style={{
+                              padding: '20px', borderRadius: '24px', border: '2px solid',
+                              borderColor: isActive ? '#22c55e' : '#f1f5f9',
+                              background: isActive ? '#f0fdf4' : '#ffffff',
+                              cursor: isEditing ? 'pointer' : 'default', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                              position: 'relative'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                              <div style={{ width: '40px', height: '40px', background: isActive ? '#dcfce7' : '#f8fafc', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isActive ? '#166534' : '#94a3b8' }}>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                  <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </div>
+                              {isEditing && (
+                                <div style={{
+                                  width: '20px', height: '20px', borderRadius: '50%', border: '2px solid',
+                                  borderColor: isActive ? '#22c55e' : '#cbd5e1', background: isActive ? '#22c55e' : 'transparent',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}>
+                                  {isActive && <span style={{ color: 'white', fontSize: '10px', fontWeight: 900 }}>✓</span>}
+                                </div>
+                              )}
                             </div>
-                         );
-                       })}
+                            <h4 style={{ margin: '0 0 4px 0', fontSize: '0.95rem', fontWeight: 800, color: '#1e293b' }}>{p.name}</h4>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: isActive ? '#059669' : '#94a3b8' }}>
+                              {isActive ? 'License Active' : 'Not Licensed'}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Sidebar Area */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div className="card" style={{ padding: '24px' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '20px', color: '#1e293b' }}>Entity Identity</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ padding: '16px', background: '#eff6ff', borderRadius: '16px', border: '1px solid #dbeafe' }}>
+                      <p className="muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px', fontWeight: 800 }}>Account Owner</p>
+                      <strong style={{ fontSize: '1rem', color: '#1e40af' }}>{selectedCompany.admin?.name || 'N/A'}</strong>
+                    </div>
+                    <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '16px', border: '1px solid #eef2f6' }}>
+                      <p className="muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px', fontWeight: 800 }}>Primary Email</p>
+                      <strong style={{ fontSize: '0.9rem', color: '#475569', wordBreak: 'break-all' }}>{selectedCompany.email}</strong>
+                    </div>
+                    <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '16px', border: '1px solid #eef2f6' }}>
+                      <p className="muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px', fontWeight: 800 }}>Unique Identifier</p>
+                      <code style={{ fontSize: '0.8rem', color: '#94a3b8' }}>{selectedCompany._id}</code>
                     </div>
                   </div>
-               </div>
+                </div>
 
-               {/* Sidebar Area */}
-               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                  <div className="card" style={{ padding: '24px' }}>
-                     <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '20px', color: '#1e293b' }}>Entity Identity</h3>
-                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        <div style={{ padding: '16px', background: '#eff6ff', borderRadius: '16px', border: '1px solid #dbeafe' }}>
-                           <p className="muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px', fontWeight: 800 }}>Account Owner</p>
-                           <strong style={{ fontSize: '1rem', color: '#1e40af' }}>{selectedCompany.admin?.name || 'N/A'}</strong>
-                        </div>
-                        <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '16px', border: '1px solid #eef2f6' }}>
-                           <p className="muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px', fontWeight: 800 }}>Primary Email</p>
-                           <strong style={{ fontSize: '0.9rem', color: '#475569', wordBreak: 'break-all' }}>{selectedCompany.email}</strong>
-                        </div>
-                        <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '16px', border: '1px solid #eef2f6' }}>
-                           <p className="muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px', fontWeight: 800 }}>Unique Identifier</p>
-                           <code style={{ fontSize: '0.8rem', color: '#94a3b8' }}>{selectedCompany._id}</code>
-                        </div>
-                     </div>
+                <div className="card" style={{ padding: '24px', background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)', color: 'white', border: 'none' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '20px' }}>Security Status</h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '12px' }}>
+                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 10px #22c55e' }} />
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>SSO Integration Active</span>
                   </div>
-
-                  <div className="card" style={{ padding: '24px', background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)', color: 'white', border: 'none' }}>
-                     <h3 style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '20px' }}>Security Status</h3>
-                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '12px' }}>
-                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 10px #22c55e' }} />
-                        <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>SSO Integration Active</span>
-                     </div>
-                  </div>
-               </div>
+                </div>
+              </div>
             </div>
           </div>
         );
@@ -1388,9 +1395,9 @@ function Dashboard() {
         const search = String(activitySearch || "").trim().toLowerCase();
         const filteredActivities = search
           ? activityItems.filter((a) => {
-              const hay = `${a.title || ""} ${a.description || ""}`.toLowerCase();
-              return hay.includes(search);
-            })
+            const hay = `${a.title || ""} ${a.description || ""}`.toLowerCase();
+            return hay.includes(search);
+          })
           : activityItems;
 
         const totalPages = Math.ceil(filteredActivities.length / activitiesPerPage);
@@ -1407,290 +1414,274 @@ function Dashboard() {
         return (
           <div style={{ background: '#ffffff', padding: 0, height: '100%', width: '100%', margin: '-16px -16px -16px -8px' }}>
             <div className="card" style={{ padding: '0', overflow: 'hidden', height: '100%', width: '100%', display: 'flex', flexDirection: 'column', border: 'none', borderRadius: 0 }}>
-            <div style={{ padding: '18px 18px 12px', background: '#ffffff', borderBottom: '1px solid #f1f5f9' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px' }}>
-                <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
-                  <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #ec4899 0%, #a855f7 100%)' }} />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 12, background: '#fce7f3', color: '#be185d', display: 'grid', placeItems: 'center' }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 2 2 7l10 5 10-5-10-5Z" />
-                        <path d="M2 17l10 5 10-5" />
-                        <path d="M2 12l10 5 10-5" />
-                      </svg>
+              <div style={{ padding: '18px 18px 12px', background: '#ffffff', borderBottom: '1px solid #f1f5f9' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px' }}>
+                  <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
+                    <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #ec4899 0%, #a855f7 100%)' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 12, background: '#fce7f3', color: '#be185d', display: 'grid', placeItems: 'center' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+                          <path d="M2 17l10 5 10-5" />
+                          <path d="M2 12l10 5 10-5" />
+                        </svg>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b' }}>Total Records</div>
+                        <div style={{ fontSize: 20, fontWeight: 900, color: '#0f172a' }}>{totalRecords.toLocaleString()}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b' }}>Total Records</div>
-                      <div style={{ fontSize: 20, fontWeight: 900, color: '#0f172a' }}>{totalRecords.toLocaleString()}</div>
+                  </div>
+
+                  <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
+                    <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #06b6d4 0%, #3b82f6 100%)' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 12, background: '#e0f2fe', color: '#0369a1', display: 'grid', placeItems: 'center' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b' }}>Security Alerts</div>
+                        <div style={{ fontSize: 20, fontWeight: 900, color: '#0f172a' }}>{String(securityAlerts).padStart(2, "0")}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
+                    <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #fb923c 0%, #f97316 100%)' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 12, background: '#ffedd5', color: '#9a3412', display: 'grid', placeItems: 'center' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 19V5" />
+                          <path d="M4 19h16" />
+                          <path d="M8 15v-4" />
+                          <path d="M12 15V7" />
+                          <path d="M16 15v-6" />
+                        </svg>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b' }}>24H Log Vol</div>
+                        <div style={{ fontSize: 20, fontWeight: 900, color: '#0f172a' }}>{logVol24h.toLocaleString()}</div>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
-                  <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #06b6d4 0%, #3b82f6 100%)' }} />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 12, background: '#e0f2fe', color: '#0369a1', display: 'grid', placeItems: 'center' }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b' }}>Security Alerts</div>
-                      <div style={{ fontSize: 20, fontWeight: 900, color: '#0f172a' }}>{String(securityAlerts).padStart(2, "0")}</div>
-                    </div>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
+                  <div style={{ position: 'relative', flex: 1 }}>
+                    <input
+                      value={activitySearch}
+                      onChange={(e) => {
+                        setActivitySearch(e.target.value);
+                        setCurrentActivityPage(1);
+                      }}
+                      placeholder="Search..."
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px 10px 36px',
+                        borderRadius: '12px',
+                        border: '1px solid #e2e8f0',
+                        background: '#ffffff',
+                        outline: 'none',
+                        fontWeight: 600,
+                        color: '#0f172a'
+                      }}
+                    />
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }}>
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="m21 21-4.3-4.3" />
+                    </svg>
                   </div>
-                </div>
 
-                <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
-                  <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #fb923c 0%, #f97316 100%)' }} />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 12, background: '#ffedd5', color: '#9a3412', display: 'grid', placeItems: 'center' }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 19V5" />
-                        <path d="M4 19h16" />
-                        <path d="M8 15v-4" />
-                        <path d="M12 15V7" />
-                        <path d="M16 15v-6" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#64748b' }}>24H Log Vol</div>
-                      <div style={{ fontSize: 20, fontWeight: 900, color: '#0f172a' }}>{logVol24h.toLocaleString()}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
-                <div style={{ position: 'relative', flex: 1 }}>
-                  <input
-                    value={activitySearch}
-                    onChange={(e) => {
-                      setActivitySearch(e.target.value);
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await loadData();
                       setCurrentActivityPage(1);
                     }}
-                    placeholder="Search..."
                     style={{
-                      width: '100%',
-                      padding: '10px 12px 10px 36px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '10px 14px',
                       borderRadius: '12px',
                       border: '1px solid #e2e8f0',
                       background: '#ffffff',
-                      outline: 'none',
-                      fontWeight: 600,
-                      color: '#0f172a'
-                    }}
-                  />
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }}>
-                    <circle cx="11" cy="11" r="7" />
-                    <path d="m21 21-4.3-4.3" />
-                  </svg>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await loadData();
-                    setCurrentActivityPage(1);
-                  }}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '10px 14px',
-                    borderRadius: '12px',
-                    border: '1px solid #e2e8f0',
-                    background: '#ffffff',
-                    fontWeight: 900,
-                    letterSpacing: '0.08em',
-                    textTransform: 'uppercase',
-                    fontSize: '12px',
-                    color: '#0f172a',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                    <path d="M21 3v6h-6" />
-                  </svg>
-                  Refresh History
-                </button>
-
-                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '4px', background: '#f1f5f9', borderRadius: '10px' }}>
-                  <button
-                    disabled={currentActivityPage === 1}
-                    onClick={() => setCurrentActivityPage(p => p - 1)}
-                    style={{
-                      width: '32px', height: '32px', borderRadius: '8px', border: 'none',
-                      background: currentActivityPage === 1 ? 'transparent' : 'white',
-                      color: '#64748b', cursor: currentActivityPage === 1 ? 'not-allowed' : 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: currentActivityPage === 1 ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
+                      fontWeight: 900,
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      fontSize: '12px',
+                      color: '#0f172a',
+                      cursor: 'pointer'
                     }}
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                      <path d="M21 3v6h-6" />
                     </svg>
+                    Refresh History
                   </button>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#475569', padding: '0 8px' }}>Page {currentActivityPage} of {totalPages || 1}</span>
-                  <button
-                    disabled={currentActivityPage === totalPages || totalPages === 0}
-                    onClick={() => setCurrentActivityPage(p => p + 1)}
-                    style={{
-                      width: '32px', height: '32px', borderRadius: '8px', border: 'none',
-                      background: (currentActivityPage === totalPages || totalPages === 0) ? 'transparent' : 'white',
-                      color: '#64748b', cursor: (currentActivityPage === totalPages || totalPages === 0) ? 'not-allowed' : 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: (currentActivityPage === totalPages || totalPages === 0) ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
-                    }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-            
-            <div style={{ padding: '24px', flex: 1, position: 'relative' }}>
-              {pagedActivities.length === 0 ? (
-                <div style={{ padding: '60px 40px', textAlign: 'center', background: '#f8fafc', borderRadius: '20px', border: '2px dashed #e2e8f0' }}>
-                  <p style={{ color: '#94a3b8', fontWeight: 500 }}>No system activities recorded yet.</p>
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gap: '14px', position: 'relative' }}>
-                  {pagedActivities.map((activity) => (
-                    <details
-                      key={activity.id}
+
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '4px', background: '#f1f5f9', borderRadius: '10px' }}>
+                    <button
+                      disabled={currentActivityPage === 1}
+                      onClick={() => setCurrentActivityPage(p => p - 1)}
                       style={{
-                        borderRadius: 14,
-                        background: "#ffffff",
-                        border: "1px solid #eef2f6",
-                        padding: 12
+                        width: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                        background: currentActivityPage === 1 ? 'transparent' : 'white',
+                        color: '#64748b', cursor: currentActivityPage === 1 ? 'not-allowed' : 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        boxShadow: currentActivityPage === 1 ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
                       }}
                     >
-                      <summary
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#475569', padding: '0 8px' }}>Page {currentActivityPage} of {totalPages || 1}</span>
+                    <button
+                      disabled={currentActivityPage === totalPages || totalPages === 0}
+                      onClick={() => setCurrentActivityPage(p => p + 1)}
+                      style={{
+                        width: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                        background: (currentActivityPage === totalPages || totalPages === 0) ? 'transparent' : 'white',
+                        color: '#64748b', cursor: (currentActivityPage === totalPages || totalPages === 0) ? 'not-allowed' : 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        boxShadow: (currentActivityPage === totalPages || totalPages === 0) ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ padding: '24px', flex: 1, position: 'relative' }}>
+                {pagedActivities.length === 0 ? (
+                  <div style={{ padding: '60px 40px', textAlign: 'center', background: '#f8fafc', borderRadius: '20px', border: '2px dashed #e2e8f0' }}>
+                    <p style={{ color: '#94a3b8', fontWeight: 500 }}>No system activities recorded yet.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gap: '14px', position: 'relative' }}>
+                    {pagedActivities.map((activity) => (
+                      <div
+                        key={activity.id}
                         style={{
-                          listStyle: "none",
+                          borderRadius: 16,
+                          background: "#ffffff",
+                          border: "1px solid #eef2f6",
+                          padding: "16px 20px",
                           display: "flex",
                           gap: 20,
-                          cursor: "pointer",
-                          alignItems: "flex-start"
+                          alignItems: "center",
+                          transition: "all 0.2s ease",
+                          boxShadow: "0 2px 4px rgba(0,0,0,0.02)"
                         }}
+                        onMouseOver={(e) => (e.currentTarget.style.borderColor = "#2563eb")}
+                        onMouseOut={(e) => (e.currentTarget.style.borderColor = "#eef2f6")}
                       >
-                      <div style={{ 
-                        width: '36px', height: '36px', background: 'white', border: `2px solid ${typeMeta(activity.type).color}33`, 
-                        borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                        color: typeMeta(activity.type).color, flexShrink: 0, boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
-                        fontSize: '14px'
-                      }}>
-                        {typeMeta(activity.type).icon}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                           <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>{activity.title}</h4>
-                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ width: '4px', height: '4px', background: '#cbd5e1', borderRadius: '50%' }} />
-                              <span className="muted" style={{ fontSize: '0.75rem', fontWeight: 600 }}>
-                                {new Date(activity.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                           </div>
+                        <div style={{
+                          width: '44px', height: '44px', background: 'white', border: `2px solid ${typeMeta(activity.type).color}22`,
+                          borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: typeMeta(activity.type).color, flexShrink: 0, boxShadow: '0 4px 10px rgba(0,0,0,0.04)',
+                          fontSize: '18px'
+                        }}>
+                          {typeMeta(activity.type).icon}
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                           <p className="muted" style={{ fontSize: '0.85rem', margin: 0, color: '#64748b' }}>{activity.description}</p>
-                           <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic' }}>{new Date(activity.time).toLocaleDateString()}</span>
+                        
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span style={{ 
+                              fontSize: '0.9rem', 
+                              fontWeight: 900, 
+                              color: '#1e293b',
+                              padding: '2px 8px',
+                              background: '#f1f5f9',
+                              borderRadius: '6px'
+                            }}>
+                              {activity.details?.companyName || "System"}
+                            </span>
+                            <span style={{ 
+                              fontSize: '0.8rem', 
+                              fontWeight: 700, 
+                              color: typeMeta(activity.type).color,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.02em'
+                            }}>
+                              {activity.title}
+                            </span>
+                          </div>
+                          <p style={{ fontSize: '0.85rem', margin: '4px 0 0 0', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {activity.description}
+                          </p>
                         </div>
-                      </div>
-                      </summary>
 
-                      {activity.details ? (
-                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #f1f5f9" }}>
-                          <div style={{ display: "grid", gap: 8 }}>
-                            {activity.details.companyName ? (
-                              <div style={{ fontSize: 12, color: "#334155", fontWeight: 800 }}>
-                                Company: <span style={{ fontWeight: 700 }}>{activity.details.companyName}</span>
-                              </div>
-                            ) : null}
-                            {activity.details.product ? (
-                              <div style={{ fontSize: 12, color: "#334155", fontWeight: 800 }}>
-                                Product: <span style={{ fontWeight: 700 }}>{activity.details.product}</span>
-                              </div>
-                            ) : null}
-
-                            {Array.isArray(activity.details.added) && activity.details.added.length ? (
-                              <div style={{ fontSize: 12, color: "#166534", fontWeight: 800 }}>
-                                Added: <span style={{ fontWeight: 700 }}>{activity.details.added.join(", ")}</span>
-                              </div>
-                            ) : null}
-                            {Array.isArray(activity.details.removed) && activity.details.removed.length ? (
-                              <div style={{ fontSize: 12, color: "#991b1b", fontWeight: 800 }}>
-                                Removed: <span style={{ fontWeight: 700 }}>{activity.details.removed.join(", ")}</span>
-                              </div>
-                            ) : null}
-
-                            {Array.isArray(activity.details.activated) && activity.details.activated.length ? (
-                              <div style={{ fontSize: 12, color: "#166534", fontWeight: 800 }}>
-                                Activated: <span style={{ fontWeight: 700 }}>{activity.details.activated.join(", ")}</span>
-                              </div>
-                            ) : null}
-                            {Array.isArray(activity.details.deactivated) && activity.details.deactivated.length ? (
-                              <div style={{ fontSize: 12, color: "#991b1b", fontWeight: 800 }}>
-                                Deactivated: <span style={{ fontWeight: 700 }}>{activity.details.deactivated.join(", ")}</span>
-                              </div>
-                            ) : null}
-
-                            {Array.isArray(activity.details.changes) && activity.details.changes.length ? (
-                              <div style={{ display: "grid", gap: 6 }}>
-                                <div style={{ fontSize: 12, color: "#334155", fontWeight: 900 }}>
-                                  Changes
-                                </div>
-                                <div style={{ display: "grid", gap: 6 }}>
-                                  {activity.details.changes.slice(0, 12).map((c, idx) => (
-                                    <div key={idx} style={{ fontSize: 12, color: "#475569" }}>
-                                      <span style={{ fontWeight: 900, color: "#0f172a" }}>{c.field}</span>:{" "}
-                                      <span style={{ color: "#64748b" }}>{String(c.from)}</span> →{" "}
-                                      <span style={{ color: "#0f172a", fontWeight: 800 }}>{String(c.to)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', flexShrink: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8' }}>
+                              {new Date(activity.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                            {activity.details ? (
+                              <button
+                                onClick={() => setSelectedActivity(activity)}
+                                style={{
+                                  background: '#eff6ff',
+                                  color: '#2563eb',
+                                  border: 'none',
+                                  padding: '6px 12px',
+                                  borderRadius: '8px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 800,
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s'
+                                }}
+                                onMouseOver={(e) => (e.currentTarget.style.background = '#dbeafe')}
+                                onMouseOut={(e) => (e.currentTarget.style.background = '#eff6ff')}
+                              >
+                                View Details
+                              </button>
                             ) : null}
                           </div>
+                          <span style={{ fontSize: '0.65rem', color: '#cbd5e1', fontWeight: 600 }}>
+                            {new Date(activity.time).toLocaleDateString()}
+                          </span>
                         </div>
-                      ) : null}
-                    </details>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {totalPages > 1 && (
+                <div style={{
+                  padding: '16px 24px',
+                  borderTop: '1px solid #f1f5f9',
+                  background: '#ffffff',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentActivityPage(page)}
+                      style={{
+                        minWidth: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                        background: currentActivityPage === page ? '#2563eb' : 'transparent',
+                        color: currentActivityPage === page ? 'white' : '#64748b',
+                        fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        boxShadow: currentActivityPage === page ? '0 4px 12px rgba(37, 99, 235, 0.3)' : 'none'
+                      }}
+                    >
+                      {page}
+                    </button>
                   ))}
                 </div>
               )}
-            </div>
-            
-            {totalPages > 1 && (
-              <div style={{ 
-                padding: '16px 24px', 
-                borderTop: '1px solid #f1f5f9', 
-                background: '#ffffff', 
-                display: 'flex', 
-                justifyContent: 'center', 
-                gap: '8px' 
-              }}>
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                  <button
-                    key={page}
-                    onClick={() => setCurrentActivityPage(page)}
-                    style={{
-                      minWidth: '32px', height: '32px', borderRadius: '8px', border: 'none',
-                      background: currentActivityPage === page ? '#2563eb' : 'transparent',
-                      color: currentActivityPage === page ? 'white' : '#64748b',
-                      fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      boxShadow: currentActivityPage === page ? '0 4px 12px rgba(37, 99, 235, 0.3)' : 'none'
-                    }}
-                  >
-                    {page}
-                  </button>
-                ))}
-              </div>
-            )}
             </div>
           </div>
         );
@@ -2319,43 +2310,43 @@ function Dashboard() {
                   ) : null}
 
                   <div style={{ marginTop: "22px", display: "flex", justifyContent: "flex-end", gap: "14px" }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowEditModal(false)}
-                    style={{
-                      background: "#ffffff",
-                      color: "#64748b",
-                      padding: "12px 18px",
-                      borderRadius: "14px",
-                      fontWeight: 900,
-                      letterSpacing: "0.02em",
-                      border: "1px solid #e2e8f0",
-                      cursor: "pointer",
-                      minWidth: "140px"
-                    }}
-                  >
-                    CANCEL
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    style={{
-                      background: "#2563eb",
-                      color: "white",
-                      padding: "12px 20px",
-                      borderRadius: "14px",
-                      fontWeight: 900,
-                      letterSpacing: "0.02em",
-                      border: "none",
-                      cursor: "pointer",
-                      minWidth: "220px",
-                      boxShadow: "0 14px 28px rgba(37, 99, 235, 0.22)",
-                      opacity: submitting ? 0.85 : 1
-                    }}
-                  >
-                    {submitting ? "SAVING..." : "SAVE CHANGES"}
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowEditModal(false)}
+                      style={{
+                        background: "#ffffff",
+                        color: "#64748b",
+                        padding: "12px 18px",
+                        borderRadius: "14px",
+                        fontWeight: 900,
+                        letterSpacing: "0.02em",
+                        border: "1px solid #e2e8f0",
+                        cursor: "pointer",
+                        minWidth: "140px"
+                      }}
+                    >
+                      CANCEL
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      style={{
+                        background: "#2563eb",
+                        color: "white",
+                        padding: "12px 20px",
+                        borderRadius: "14px",
+                        fontWeight: 900,
+                        letterSpacing: "0.02em",
+                        border: "none",
+                        cursor: "pointer",
+                        minWidth: "220px",
+                        boxShadow: "0 14px 28px rgba(37, 99, 235, 0.22)",
+                        opacity: submitting ? 0.85 : 1
+                      }}
+                    >
+                      {submitting ? "SAVING..." : "SAVE CHANGES"}
+                    </button>
+                  </div>
                 </div>
               </form>
             </div>
@@ -2394,282 +2385,282 @@ function Dashboard() {
               }}
               onClick={(e) => e.stopPropagation()}
             >
-            <div
-              style={{
-                padding: '20px',
-                borderBottom: '1px solid #f1f5f9',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
-              }}
-            >
-              <div>
-                <div style={{ fontSize: '1.35rem', fontWeight: 900, color: '#0f172a' }}>
-                  New Company Create
+              <div
+                style={{
+                  padding: '20px',
+                  borderBottom: '1px solid #f1f5f9',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '1.35rem', fontWeight: 900, color: '#0f172a' }}>
+                    New Company Create
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <form
-              autoComplete="off"
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const created = await submitCompany(e);
-                if (created) {
-                  setShowCreateModal(false);
-                }
-              }}
-            >
-              {/* Prevent browser autofill from injecting saved credentials */}
-              <input
-                type="text"
-                name="gtone_fake_username"
-                autoComplete="username"
-                tabIndex={-1}
-                style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }}
-              />
-              <input
-                type="password"
-                name="gtone_fake_password"
-                autoComplete="current-password"
-                tabIndex={-1}
-                style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }}
-              />
-              <div style={{ padding: '20px' }}>
-                {/* Logo left + 6 inputs on right (2 rows x 3) */}
-                <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '18px', alignItems: 'start' }}>
-                  {/* Logo Upload */}
-                  <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-                    <label
-                      style={{
-                        width: '120px',
-                        height: '120px',
-                        borderRadius: '22px',
-                        border: '1.5px dashed #cbd5e1',
-                        background: '#f8fafc',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        position: 'relative',
-                        overflow: 'hidden'
-                      }}
-                    >
-                      <input
-                        type="file"
-                        accept="image/*"
-                        style={{ display: 'none' }}
-                        onChange={(ev) => {
-                          const file = ev.target.files?.[0];
-                          if (!file) return;
-                          const url = URL.createObjectURL(file);
-                          setCompanyLogoPreview(url);
-                        }}
-                      />
-                      {companyLogoPreview ? (
-                        <img src={companyLogoPreview} alt="Company logo preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        <div style={{ textAlign: 'center' }}>
-                          <div style={{ width: 40, height: 40, borderRadius: 14, background: '#eef2ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="20" height="20">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4-4a3 5 0 0 1 4 0l4 4" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2 20h20" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 10a4 4 0 0 1 10 0" />
-                            </svg>
-                          </div>
-                          <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b' }}>UPLOAD LOGO</div>
-                        </div>
-                      )}
-
-                      <div
+              <form
+                autoComplete="off"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const created = await submitCompany(e);
+                  if (created) {
+                    setShowCreateModal(false);
+                  }
+                }}
+              >
+                {/* Prevent browser autofill from injecting saved credentials */}
+                <input
+                  type="text"
+                  name="gtone_fake_username"
+                  autoComplete="username"
+                  tabIndex={-1}
+                  style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }}
+                />
+                <input
+                  type="password"
+                  name="gtone_fake_password"
+                  autoComplete="current-password"
+                  tabIndex={-1}
+                  style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }}
+                />
+                <div style={{ padding: '20px' }}>
+                  {/* Logo left + 6 inputs on right (2 rows x 3) */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '18px', alignItems: 'start' }}>
+                    {/* Logo Upload */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                      <label
                         style={{
-                          position: 'absolute',
-                          right: 12,
-                          bottom: 12,
-                          width: 34,
-                          height: 34,
-                          borderRadius: 14,
-                          background: '#4f46e5',
-                          color: 'white',
+                          width: '120px',
+                          height: '120px',
+                          borderRadius: '22px',
+                          border: '1.5px dashed #cbd5e1',
+                          background: '#f8fafc',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          boxShadow: '0 10px 20px rgba(79, 70, 229, 0.25)'
+                          cursor: 'pointer',
+                          position: 'relative',
+                          overflow: 'hidden'
                         }}
                       >
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 20h9" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
-                        </svg>
-                      </div>
-                    </label>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '14px' }}>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                      COMPANY NAME
-                    </label>
-                    <input
-                      name="name"
-                      value={form.name}
-                      onChange={updateField}
-                      required
-                        placeholder="Company name"
-                      autoComplete="off"
-                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                      ADMIN NAME
-                    </label>
-                    <input
-                      name="adminName"
-                      value={form.adminName}
-                      onChange={updateField}
-                      required
-                        placeholder="Admin full name"
-                      autoComplete="off"
-                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                      COMPANY EMAIL
-                    </label>
-                    <input
-                      type="email"
-                      name="email"
-                      value={form.email}
-                      onChange={updateField}
-                      required
-                        placeholder="company@example.com"
-                      autoComplete="off"
-                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                      PASSWORD
-                    </label>
-                    <div style={{ position: "relative" }}>
-                      <input
-                        type={showCreatePassword ? "text" : "password"}
-                        name="adminPassword"
-                        value={form.adminPassword}
-                        onChange={updateField}
-                        required
-                        placeholder="Create a password"
-                        autoComplete="new-password"
-                        style={{
-                          width: "100%",
-                          padding: "12px 44px 12px 14px",
-                          borderRadius: "14px",
-                          border: "1px solid transparent",
-                          outline: "none",
-                          background: "#f8fafc"
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowCreatePassword((v) => !v)}
-                        style={{
-                          position: "absolute",
-                          right: 10,
-                          top: "50%",
-                          transform: "translateY(-50%)",
-                          width: 32,
-                          height: 32,
-                          borderRadius: 12,
-                          border: "none",
-                          background: "transparent",
-                          color: "#64748b",
-                          cursor: "pointer",
-                          display: "grid",
-                          placeItems: "center",
-                          boxShadow: "none"
-                        }}
-                        aria-label={showCreatePassword ? "Hide password" : "Show password"}
-                      >
-                        {showCreatePassword ? (
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.11 1 12c.62-1.47 1.53-2.87 2.68-4.11" />
-                            <path d="M10.58 10.58A2 2 0 0 0 12 14a2 2 0 0 0 1.42-.58" />
-                            <path d="M9.88 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.89 11 8-1.02 2.43-2.8 4.58-5.06 5.94" />
-                            <path d="M1 1l22 22" />
-                          </svg>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={(ev) => {
+                            const file = ev.target.files?.[0];
+                            if (!file) return;
+                            const url = URL.createObjectURL(file);
+                            setCompanyLogoPreview(url);
+                          }}
+                        />
+                        {companyLogoPreview ? (
+                          <img src={companyLogoPreview} alt="Company logo preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         ) : (
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
-                            <circle cx="12" cy="12" r="3" />
-                          </svg>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ width: 40, height: 40, borderRadius: 14, background: '#eef2ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="20" height="20">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4-4a3 5 0 0 1 4 0l4 4" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2 20h20" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 10a4 4 0 0 1 10 0" />
+                              </svg>
+                            </div>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b' }}>UPLOAD LOGO</div>
+                          </div>
                         )}
-                      </button>
+
+                        <div
+                          style={{
+                            position: 'absolute',
+                            right: 12,
+                            bottom: 12,
+                            width: 34,
+                            height: 34,
+                            borderRadius: 14,
+                            background: '#4f46e5',
+                            color: 'white',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            boxShadow: '0 10px 20px rgba(79, 70, 229, 0.25)'
+                          }}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 20h9" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                          </svg>
+                        </div>
+                      </label>
                     </div>
-                  </div>
 
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                      PHONE NUMBER
-                    </label>
-                    <input
-                      name="phone"
-                      value={form.phone}
-                      onChange={updateField}
-                      inputMode="numeric"
-                      maxLength={15}
-                      placeholder="9876543210"
-                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                    />
-                  </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '14px' }}>
 
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                      SUB COMPANY LIMIT
-                    </label>
-                    <input
-                      name="subCompanyLimit"
-                      value={form.subCompanyLimit}
-                      onChange={updateField}
-                        placeholder="10"
-                      style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                    />
-                  </div>
-                  </div>
-
-                  <div
-                    style={{
-                      gridColumn: '1 / -1',
-                      marginTop: '14px',
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                      gap: '14px'
-                    }}
-                  >
-                  <div>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                          COMPANY TYPE
+                          COMPANY NAME
                         </label>
-                        <select
-                          name="companyType"
-                          value={form.companyType}
+                        <input
+                          name="name"
+                          value={form.name}
                           onChange={updateField}
+                          required
+                          placeholder="Company name"
+                          autoComplete="off"
                           style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                        >
-                          <option value="">Select Type</option>
-                          <option value="PRIVATE">Private</option>
-                          <option value="PUBLIC">Public</option>
-                          <option value="PARTNERSHIP">Partnership</option>
-                        </select>
+                        />
                       </div>
-                  </div>
-                  <div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          ADMIN NAME
+                        </label>
+                        <input
+                          name="adminName"
+                          value={form.adminName}
+                          onChange={updateField}
+                          required
+                          placeholder="Admin full name"
+                          autoComplete="off"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          COMPANY EMAIL
+                        </label>
+                        <input
+                          type="email"
+                          name="email"
+                          value={form.email}
+                          onChange={updateField}
+                          required
+                          placeholder="company@example.com"
+                          autoComplete="off"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          PASSWORD
+                        </label>
+                        <div style={{ position: "relative" }}>
+                          <input
+                            type={showCreatePassword ? "text" : "password"}
+                            name="adminPassword"
+                            value={form.adminPassword}
+                            onChange={updateField}
+                            required
+                            placeholder="Create a password"
+                            autoComplete="new-password"
+                            style={{
+                              width: "100%",
+                              padding: "12px 44px 12px 14px",
+                              borderRadius: "14px",
+                              border: "1px solid transparent",
+                              outline: "none",
+                              background: "#f8fafc"
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowCreatePassword((v) => !v)}
+                            style={{
+                              position: "absolute",
+                              right: 10,
+                              top: "50%",
+                              transform: "translateY(-50%)",
+                              width: 32,
+                              height: 32,
+                              borderRadius: 12,
+                              border: "none",
+                              background: "transparent",
+                              color: "#64748b",
+                              cursor: "pointer",
+                              display: "grid",
+                              placeItems: "center",
+                              boxShadow: "none"
+                            }}
+                            aria-label={showCreatePassword ? "Hide password" : "Show password"}
+                          >
+                            {showCreatePassword ? (
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.11 1 12c.62-1.47 1.53-2.87 2.68-4.11" />
+                                <path d="M10.58 10.58A2 2 0 0 0 12 14a2 2 0 0 0 1.42-.58" />
+                                <path d="M9.88 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.89 11 8-1.02 2.43-2.8 4.58-5.06 5.94" />
+                                <path d="M1 1l22 22" />
+                              </svg>
+                            ) : (
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                                <circle cx="12" cy="12" r="3" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          PHONE NUMBER
+                        </label>
+                        <input
+                          name="phone"
+                          value={form.phone}
+                          onChange={updateField}
+                          inputMode="numeric"
+                          maxLength={15}
+                          placeholder="9876543210"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          SUB COMPANY LIMIT
+                        </label>
+                        <input
+                          name="subCompanyLimit"
+                          value={form.subCompanyLimit}
+                          onChange={updateField}
+                          placeholder="10"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        gridColumn: '1 / -1',
+                        marginTop: '14px',
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                        gap: '14px'
+                      }}
+                    >
+                      <div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                            COMPANY TYPE
+                          </label>
+                          <select
+                            name="companyType"
+                            value={form.companyType}
+                            onChange={updateField}
+                            style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                          >
+                            <option value="">Select Type</option>
+                            <option value="PRIVATE">Private</option>
+                            <option value="PUBLIC">Public</option>
+                            <option value="PARTNERSHIP">Partnership</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                           GST NUMBER
                         </label>
@@ -2681,7 +2672,7 @@ function Dashboard() {
                           style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                         />
                       </div>
-                  <div>
+                      <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                           PAN NUMBER
                         </label>
@@ -2693,7 +2684,7 @@ function Dashboard() {
                           style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                         />
                       </div>
-                  <div>
+                      <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                           REGISTRATION NO
                         </label>
@@ -2705,7 +2696,7 @@ function Dashboard() {
                           style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                         />
                       </div>
-                  <div>
+                      <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                           DISTRICT
                         </label>
@@ -2717,7 +2708,7 @@ function Dashboard() {
                           style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                         />
                       </div>
-                  <div>
+                      <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                           COUNTRY
                         </label>
@@ -2729,35 +2720,35 @@ function Dashboard() {
                           style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                         />
                       </div>
-                  </div>
+                    </div>
 
-                  {/* State + Office Address on one line */}
-                  <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '14px' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                        STATE
-                      </label>
-                      <input
-                        name="state"
-                        value={form.state}
-                        onChange={updateField}
-                        placeholder="State (optional)"
-                        style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                      />
+                    {/* State + Office Address on one line */}
+                    <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '14px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          STATE
+                        </label>
+                        <input
+                          name="state"
+                          value={form.state}
+                          onChange={updateField}
+                          placeholder="State (optional)"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          OFFICE ADDRESS
+                        </label>
+                        <input
+                          name="officeAddress"
+                          value={form.officeAddress}
+                          onChange={updateField}
+                          placeholder="Office address (optional)"
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                        OFFICE ADDRESS
-                      </label>
-                      <input
-                        name="officeAddress"
-                        value={form.officeAddress}
-                        onChange={updateField}
-                        placeholder="Office address (optional)"
-                        style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                      />
-                    </div>
-                  </div>
 
                     <div style={{ marginTop: '10px', gridColumn: '1 / -1' }}>
                       <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#475569', marginBottom: '10px' }}>
@@ -2791,49 +2782,211 @@ function Dashboard() {
                         ))}
                       </div>
                     </div>
+                  </div>
+
+                  <div style={{ marginTop: '22px', display: 'flex', justifyContent: 'flex-end', gap: '14px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateModal(false)}
+                      style={{
+                        background: '#ffffff',
+                        color: '#64748b',
+                        padding: '12px 18px',
+                        borderRadius: '14px',
+                        fontWeight: 900,
+                        letterSpacing: '0.02em',
+                        border: '1px solid #e2e8f0',
+                        cursor: 'pointer',
+                        minWidth: '140px'
+                      }}
+                    >
+                      CANCEL
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      style={{
+                        background: '#4f46e5',
+                        color: 'white',
+                        padding: '12px 20px',
+                        borderRadius: '14px',
+                        fontWeight: 900,
+                        letterSpacing: '0.02em',
+                        border: 'none',
+                        cursor: 'pointer',
+                        minWidth: '220px',
+                        boxShadow: '0 14px 28px rgba(79, 70, 229, 0.25)',
+                        opacity: submitting ? 0.85 : 1
+                      }}
+                    >
+                      {submitting ? "CREATING..." : "CREATE COMPANY  +"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+      {selectedActivity &&
+        renderInBody(
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              left: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              zIndex: 3000,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backdropFilter: "blur(8px)",
+              padding: 20
+            }}
+            onClick={() => setSelectedActivity(null)}
+          >
+            <div
+              style={{
+                background: "white",
+                width: "100%",
+                maxWidth: "540px",
+                borderRadius: "24px",
+                boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
+                overflow: "hidden",
+                animation: "fadeInDown 0.3s ease-out"
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  padding: "24px",
+                  borderBottom: "1px solid #f1f5f9",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  background: "#f8fafc"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <div style={{
+                    width: '40px', height: '40px', background: 'white', border: `2px solid ${typeMeta(selectedActivity.type).color}22`,
+                    borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: typeMeta(selectedActivity.type).color, boxShadow: '0 4px 6px rgba(0,0,0,0.05)'
+                  }}>
+                    {typeMeta(selectedActivity.type).icon}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "1.1rem", fontWeight: 900, color: "#0f172a" }}>Activity Details</div>
+                    <div style={{ fontSize: "0.75rem", color: "#64748b", fontWeight: 600 }}>{new Date(selectedActivity.time).toLocaleString()}</div>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedActivity(null)} 
+                  style={{ 
+                    background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', 
+                    width: '36px', height: '36px', cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', color: '#64748b'
+                  }}
+                >✕</button>
+              </div>
+
+              <div style={{ padding: "24px", maxHeight: "70vh", overflowY: "auto" }}>
+                <div style={{ marginBottom: "20px" }}>
+                  <p style={{ margin: 0, fontSize: "0.95rem", color: "#1e293b", fontWeight: 600 }}>{selectedActivity.description}</p>
                 </div>
 
-                <div style={{ marginTop: '22px', display: 'flex', justifyContent: 'flex-end', gap: '14px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateModal(false)}
-                    style={{
-                      background: '#ffffff',
-                      color: '#64748b',
-                      padding: '12px 18px',
-                      borderRadius: '14px',
-                      fontWeight: 900,
-                      letterSpacing: '0.02em',
-                      border: '1px solid #e2e8f0',
-                      cursor: 'pointer',
-                      minWidth: '140px'
-                    }}
-                  >
-                    CANCEL
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    style={{
-                      background: '#4f46e5',
-                      color: 'white',
-                      padding: '12px 20px',
-                      borderRadius: '14px',
-                      fontWeight: 900,
-                      letterSpacing: '0.02em',
-                      border: 'none',
-                      cursor: 'pointer',
-                      minWidth: '220px',
-                      boxShadow: '0 14px 28px rgba(79, 70, 229, 0.25)',
-                      opacity: submitting ? 0.85 : 1
-                    }}
-                  >
-                    {submitting ? "CREATING..." : "CREATE COMPANY  +"}
-                  </button>
+                <div style={{ display: "grid", gap: "16px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div style={{ padding: "12px", background: "#f1f5f9", borderRadius: "14px" }}>
+                      <div style={{ fontSize: "0.65rem", fontWeight: 900, color: "#64748b", textTransform: "uppercase", marginBottom: "4px" }}>Organization</div>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 800, color: "#0f172a" }}>{selectedActivity.details?.companyName || "N/A"}</div>
+                    </div>
+                    <div style={{ padding: "12px", background: "#f1f5f9", borderRadius: "14px" }}>
+                      <div style={{ fontSize: "0.65rem", fontWeight: 900, color: "#64748b", textTransform: "uppercase", marginBottom: "4px" }}>Action Type</div>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 800, color: typeMeta(selectedActivity.type).color }}>{selectedActivity.title}</div>
+                    </div>
+                  </div>
+
+                  {selectedActivity.details?.product && (
+                    <div style={{ padding: "12px", background: "#eff6ff", borderRadius: "14px", border: "1px solid #dbeafe" }}>
+                      <div style={{ fontSize: "0.65rem", fontWeight: 900, color: "#2563eb", textTransform: "uppercase", marginBottom: "4px" }}>Product Affected</div>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 800, color: "#1e40af" }}>{selectedActivity.details.product}</div>
+                    </div>
+                  )}
+
+                  {Array.isArray(selectedActivity.details?.added) && selectedActivity.details.added.length > 0 && (
+                    <div style={{ padding: "16px", background: "#f0fdf4", borderRadius: "16px", border: "1px solid #bbf7d0" }}>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#15803d", textTransform: "uppercase", marginBottom: "8px" }}>Items Added</div>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {selectedActivity.details.added.map(item => (
+                          <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#166534", border: "1px solid #dcfce7" }}>{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {Array.isArray(selectedActivity.details?.removed) && selectedActivity.details.removed.length > 0 && (
+                    <div style={{ padding: "16px", background: "#fef2f2", borderRadius: "16px", border: "1px solid #fecaca" }}>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#b91c1c", textTransform: "uppercase", marginBottom: "8px" }}>Items Removed</div>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {selectedActivity.details.removed.map(item => (
+                          <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#991b1b", border: "1px solid #fee2e2" }}>{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {Array.isArray(selectedActivity.details?.activated) && selectedActivity.details.activated.length > 0 && (
+                    <div style={{ padding: "16px", background: "#f0fdf4", borderRadius: "16px", border: "1px solid #bbf7d0" }}>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#15803d", textTransform: "uppercase", marginBottom: "8px" }}>Modules Activated</div>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {selectedActivity.details.activated.map(item => (
+                          <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#166534", border: "1px solid #dcfce7" }}>{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {Array.isArray(selectedActivity.details?.deactivated) && selectedActivity.details.deactivated.length > 0 && (
+                    <div style={{ padding: "16px", background: "#fef2f2", borderRadius: "16px", border: "1px solid #fecaca" }}>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#b91c1c", textTransform: "uppercase", marginBottom: "8px" }}>Modules Deactivated</div>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {selectedActivity.details.deactivated.map(item => (
+                          <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#991b1b", border: "1px solid #fee2e2" }}>{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {Array.isArray(selectedActivity.details?.changes) && selectedActivity.details.changes.length > 0 && (
+                    <div style={{ padding: "16px", background: "#ffffff", borderRadius: "16px", border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#475569", textTransform: "uppercase", marginBottom: "12px" }}>Property Changes</div>
+                      <div style={{ display: "grid", gap: "10px" }}>
+                        {selectedActivity.details.changes.map((c, idx) => (
+                          <div key={idx} style={{ padding: "10px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #f1f5f9" }}>
+                            <div style={{ fontSize: "0.7rem", fontWeight: 900, color: "#64748b", textTransform: "uppercase", marginBottom: "4px" }}>{c.field}</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.85rem" }}>
+                              <span style={{ color: "#94a3b8", textDecoration: "line-through" }}>{String(c.from || "None")}</span>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="3"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                              <span style={{ color: "#0f172a", fontWeight: 800 }}>{String(c.to || "None")}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
-            </form>
-          </div>
+              
+              <div style={{ padding: "16px 24px", background: "#f8fafc", borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "flex-end" }}>
+                <button 
+                  onClick={() => setSelectedActivity(null)} 
+                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '12px', fontWeight: 800, cursor: 'pointer', boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)' }}
+                >Close</button>
+              </div>
+            </div>
           </div>
         )}
     </AdminLayout>

@@ -4,6 +4,7 @@ import api from "../lib/api";
 import { appendActivity } from "../lib/activityLog";
 import "./AssignProducts.css";
 import AdminLayout from "../components/AdminLayout";
+import { useSuperAdmin } from "../context/SuperAdminContext";
 
 const TOAST_TIMEOUT = 2500;
 
@@ -87,7 +88,8 @@ const ALL_HRMS_MODULE_KEYS = [
 const MODULE_KEYS_BY_PRODUCT = {
   CRM: ["recruitment"],
   HRMS: ALL_HRMS_MODULE_KEYS,
-  PMS: ["documentManagement"]
+  PMS: ["documentManagement"],
+  DMS: ["documentManagement"]
 };
 
 function getVisibleModuleKeys(selectedProductName, moduleKeysFromApi) {
@@ -105,18 +107,26 @@ function getProductScopedModuleLabel(selectedProductName, moduleKey, fallbackLab
   const upper = String(selectedProductName || "").toUpperCase();
   if (upper === "CRM" && moduleKey === "recruitment") return "CRM";
   if (upper === "PMS" && moduleKey === "documentManagement") return "PMS";
+  if (upper === "DMS" && moduleKey === "documentManagement") return "DMS";
   return fallbackLabel;
 }
 
 function AssignProducts() {
   const navigate = useNavigate();
   const { companyId } = useParams();
-  const [allProducts, setAllProducts] = useState([]);
+
+  const {
+    products: allProducts,
+    companies,
+    loadData: loadGlobalData,
+    isLoaded: isGlobalLoaded,
+    loading: globalLoading
+  } = useSuperAdmin();
+
   const [moduleKeys, setModuleKeys] = useState([]);
-  const [companies, setCompanies] = useState([]);
   const [company, setCompany] = useState(null);
   const [enabledModules, setEnabledModules] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!isGlobalLoaded);
   const [savingModules, setSavingModules] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState(null);
@@ -138,30 +148,24 @@ function AssignProducts() {
     setError("");
     try {
       setLoading(true);
-      const [productsRes, companiesRes, hrmsModulesRes, statsRes] = await Promise.all([
-        api.get("/products"),
-        api.get("/companies"),
+
+      // Always fetch latest data for this company specifically to ensure we are up to date
+      const [hrmsModulesRes, statsRes, companiesRes] = await Promise.all([
         api.get(`/super-admin/companies/${companyId}/hrms-modules`),
-        api.get("/super-admin/module-stats")
+        api.get("/super-admin/module-stats"),
+        api.get("/companies") // Fetch fresh companies to ensure product assignments are latest
       ]);
 
-      const targetCompany = (companiesRes.data.companies || []).find(
-        (item) => item._id === companyId
-      );
+      const latestCompanies = companiesRes.data.companies || [];
+      const targetCompany = latestCompanies.find((item) => item._id === companyId);
 
       if (!targetCompany) {
         setError("Company not found");
         return;
       }
 
-      const nextAllProducts = productsRes.data.products || [];
-      const nextCompanies = companiesRes.data.companies || [];
-      const nextHrmsModuleKeys = hrmsModulesRes.data.moduleKeys || [];
-
-      setAllProducts(nextAllProducts);
-      setCompanies(nextCompanies);
       setCompany(targetCompany);
-      setModuleKeys(nextHrmsModuleKeys);
+      setModuleKeys(hrmsModulesRes.data.moduleKeys || []);
       setEnabledModules(hrmsModulesRes.data.hrmsEnabledModules || {});
 
       const serverStats = statsRes?.data || null;
@@ -416,7 +420,7 @@ function AssignProducts() {
   }
 
   return (
-    <AdminLayout activeTab="products" setActiveTab={() => navigate("/dashboard")}>
+    <AdminLayout activeTab="products" setActiveTab={(id) => navigate("/dashboard", { state: { activeTab: id } })}>
       <div className="module-page module-page--flush">
 
         <div className="config-shell">
@@ -618,12 +622,12 @@ function AssignProducts() {
           </div>
         </div>
 
-      {error && <p className="error">{error}</p>}
-      {toast && (
-        <div className={toast.type === "success" ? "toast success" : "toast error"}>
-          {toast.message}
-        </div>
-      )}
+        {error && <p className="error">{error}</p>}
+        {toast && (
+          <div className={toast.type === "success" ? "toast success" : "toast error"}>
+            {toast.message}
+          </div>
+        )}
       </div>
     </AdminLayout>
   );
