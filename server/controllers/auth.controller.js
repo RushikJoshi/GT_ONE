@@ -472,10 +472,30 @@ export const getMe = async (req, res) => {
  * @desc    Logout & clear cookie
  */
 export const logout = async (req, res) => {
-  revokeSessionToken(req.cookies?.sso_token || req.cookies?.token);
+  const ssoToken = req.cookies?.sso_token || req.cookies?.token;
+  const refreshToken = req.cookies?.sso_refresh;
+
+  if (ssoToken) {
+    revokeSessionToken(ssoToken);
+  }
+
+  if (refreshToken) {
+    try {
+      const decoded = verifyRefreshJwt(refreshToken);
+      if (decoded?.jti) {
+        await revokeRefreshSession(decoded.jti);
+      }
+    } catch (_err) {
+      // Ignore invalid/expired refresh tokens during logout
+    }
+  }
+
   const cookieOptions = getCookieOptions(req.headers.host);
+  const refreshCookieOptions = getRefreshCookieOptions(req.headers.host);
+
   res.clearCookie("sso_token", cookieOptions);
   res.clearCookie("token", cookieOptions);
+  res.clearCookie("sso_refresh", refreshCookieOptions);
 
   const { redirect } = req.query;
   if (redirect && (redirect.startsWith("http") || redirect.startsWith("/"))) {

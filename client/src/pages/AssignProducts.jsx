@@ -144,6 +144,10 @@ function AssignProducts() {
     }, TOAST_TIMEOUT);
   };
 
+  const [serverModules, setServerModules] = useState({});
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [pendingPayload, setPendingPayload] = useState(null);
+
   const loadPage = useCallback(async () => {
     setError("");
     try {
@@ -166,7 +170,9 @@ function AssignProducts() {
 
       setCompany(targetCompany);
       setModuleKeys(hrmsModulesRes.data.moduleKeys || []);
-      setEnabledModules(hrmsModulesRes.data.hrmsEnabledModules || {});
+      const modules = hrmsModulesRes.data.hrmsEnabledModules || {};
+      setEnabledModules(modules);
+      setServerModules(modules);
 
       const serverStats = statsRes?.data || null;
       if (
@@ -227,18 +233,40 @@ function AssignProducts() {
     }));
   };
 
+  const getChangesSummary = (payload) => {
+    const keysForDiff = Array.isArray(moduleKeys) && moduleKeys.length ? moduleKeys : ALL_HRMS_MODULE_KEYS;
+    const activatedKeys = keysForDiff.filter((k) => !Boolean(serverModules[k]) && Boolean(payload[k]));
+    const deactivatedKeys = keysForDiff.filter((k) => Boolean(serverModules[k]) && !Boolean(payload[k]));
+    
+    return {
+      activated: activatedKeys.map(k => moduleMeta[k]?.label || k),
+      deactivated: deactivatedKeys.map(k => moduleMeta[k]?.label || k),
+      hasChanges: activatedKeys.length > 0 || deactivatedKeys.length > 0
+    };
+  };
+
   const saveModules = async (overrideEnabledModules) => {
     setError("");
 
     try {
+      const payload = overrideEnabledModules || pendingPayload || enabledModules;
+      const { activated, deactivated, hasChanges } = getChangesSummary(payload);
+
+      if (!hasChanges) {
+        showToast("info", "No changes to save");
+        return;
+      }
+
       setSavingModules(true);
-      const payload = overrideEnabledModules || enabledModules;
-      const prev = enabledModules || {};
       const res = await api.put(`/super-admin/companies/${companyId}/hrms-modules`, {
         hrmsEnabledModules: payload
       });
-      setEnabledModules(res.data.hrmsEnabledModules || {});
+      
+      const nextModules = res.data.hrmsEnabledModules || {};
+      setEnabledModules(nextModules);
+      setServerModules(nextModules);
       setModuleKeys(res.data.moduleKeys || moduleKeys);
+      
       try {
         const statsRes = await api.get("/super-admin/module-stats");
         const serverStats = statsRes?.data || null;
@@ -254,9 +282,6 @@ function AssignProducts() {
         // ignore stats refresh failures
       }
 
-      const keysForDiff = Array.isArray(moduleKeys) && moduleKeys.length ? moduleKeys : ALL_HRMS_MODULE_KEYS;
-      const activated = keysForDiff.filter((k) => !Boolean(prev[k]) && Boolean(payload[k]));
-      const deactivated = keysForDiff.filter((k) => Boolean(prev[k]) && !Boolean(payload[k]));
       appendActivity({
         type: "hrms_module_update",
         title: "HRMS Modules Updated",
@@ -265,11 +290,14 @@ function AssignProducts() {
           companyName: company?.name || null,
           product: "HRMS",
           activated,
-          deactivated
+          deactivated,
+          allEnabled: Object.keys(nextModules).filter(k => nextModules[k]).map(k => moduleMeta[k]?.label || k)
         }
       });
 
       showToast("success", "HRMS modules updated successfully");
+      setShowConfirmModal(false);
+      setPendingPayload(null);
     } catch (requestError) {
       const message = requestError?.response?.data?.message || "Failed to update HRMS modules";
       setError(message);
@@ -277,6 +305,17 @@ function AssignProducts() {
     } finally {
       setSavingModules(false);
     }
+  };
+
+  const handleInitialSave = () => {
+    const payload = enabledModules;
+    const { hasChanges } = getChangesSummary(payload);
+    if (!hasChanges) {
+      showToast("info", "No changes detected");
+      return;
+    }
+    setPendingPayload(payload);
+    setShowConfirmModal(true);
   };
 
   const moduleMeta = {
@@ -612,7 +651,7 @@ function AssignProducts() {
                 <button
                   type="button"
                   className="modules-save-btn"
-                  onClick={() => saveModules()}
+                  onClick={handleInitialSave}
                   disabled={savingModules}
                 >
                   {savingModules ? "Saving..." : "Save"}
@@ -621,6 +660,103 @@ function AssignProducts() {
             </div>
           </div>
         </div>
+
+        {showConfirmModal && (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(15, 23, 42, 0.4)",
+              backdropFilter: "blur(4px)",
+              zIndex: 9999,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 20
+            }}
+          >
+            <div
+              style={{
+                background: "white",
+                width: "100%",
+                maxWidth: "460px",
+                borderRadius: "24px",
+                boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
+                overflow: "hidden",
+                animation: "fadeInDown 0.2s ease-out"
+              }}
+            >
+              <div style={{ padding: "24px", borderBottom: "1px solid #f1f5f9", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <h3 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 900, color: "#0f172a" }}>Confirm Changes</h3>
+                <button onClick={() => setShowConfirmModal(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "20px", color: "#64748b" }}>✕</button>
+              </div>
+              
+              <div style={{ padding: "24px", maxHeight: "60vh", overflowY: "auto" }}>
+                <p style={{ margin: "0 0 16px 0", fontSize: "0.95rem", color: "#475569", fontWeight: 600 }}>
+                  Are you sure you want to update HRMS modules for <strong>{company?.name}</strong>?
+                </p>
+
+                {(() => {
+                  const { activated, deactivated } = getChangesSummary(pendingPayload);
+                  return (
+                    <div style={{ display: "grid", gap: "16px" }}>
+                      {activated.length > 0 && (
+                        <div style={{ padding: "16px", background: "#f0fdf4", borderRadius: "16px", border: "1px solid #bbf7d0" }}>
+                          <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#15803d", textTransform: "uppercase", marginBottom: "8px", display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e' }} />
+                            Enabling
+                          </div>
+                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                            {activated.map(item => (
+                              <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#166534", border: "1px solid #dcfce7" }}>{item}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {deactivated.length > 0 && (
+                        <div style={{ padding: "16px", background: "#fef2f2", borderRadius: "16px", border: "1px solid #fecaca" }}>
+                          <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#b91c1c", textTransform: "uppercase", marginBottom: "8px", display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444' }} />
+                            Disabling
+                          </div>
+                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                            {deactivated.map(item => (
+                              <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#991b1b", border: "1px solid #fee2e2" }}>{item}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div style={{ padding: "20px 24px", background: "#f8fafc", borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+                <button
+                  onClick={() => setShowConfirmModal(false)}
+                  style={{ padding: "10px 20px", borderRadius: "12px", border: "1px solid #e2e8f0", background: "white", color: "#64748b", fontWeight: 800, cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => saveModules()}
+                  disabled={savingModules}
+                  style={{
+                    padding: "10px 24px", borderRadius: "12px", border: "none",
+                    background: "#2563eb", color: "white", fontWeight: 800,
+                    cursor: "pointer", boxShadow: "0 10px 15px -3px rgba(37, 99, 235, 0.25)"
+                  }}
+                >
+                  {savingModules ? "Saving..." : "Confirm & Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {error && <p className="error">{error}</p>}
         {toast && (
