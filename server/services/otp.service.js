@@ -15,7 +15,7 @@ const normalizeSource = (value) => String(value || "").trim().toLowerCase();
 const escapeRegex = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const getOtpSecret = () =>
-  String(process.env.OTP_SECRET || process.env.JWT_SECRET || "gitakshmi-dev-otp-secret");
+  String(process.env.OTP_SECRET || process.env.JWT_SECRET || "gitakshmi-dev-otp-secret").trim();
 
 const generateOtp = () => crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
 
@@ -912,6 +912,7 @@ export const verifyLoginOtpChallenge = async ({
     email: normalizedEmail,
     otp: normalizedOtp
   });
+
 
   if (!compareHashes(expectedOtpHash, currentOtpState.otpHash)) {
     const nextAttempts = Number(currentOtpState.verificationAttempts || 0) + 1;

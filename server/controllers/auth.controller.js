@@ -259,12 +259,6 @@ export const verifyOtp = async (req, res) => {
       });
     }
 
-    console.log("[AUTH] verifyOtp request:", {
-      body: req.body,
-      query: req.query,
-      resolvedEmail
-    });
-
     const verification = await verifyLoginOtpChallenge({
       email: resolvedEmail,
       requestId: otpRequestId || requestId,
