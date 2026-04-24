@@ -1109,6 +1109,7 @@ const discoverHrmsTenantIds = async ({ client, centralDb }) => {
 };
 
 const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normalizedPassword }) => {
+  let emailFound = false;
   const centralDb = client.db("hrms");
   const tenantIds = await discoverHrmsTenantIds({ client, centralDb });
   console.log(`[SSO] Employee scan tenantIds=${tenantIds.length} for email=${normalizedEmail}`);
@@ -1178,7 +1179,7 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
       tenantId
     });
 
-    return { user: virtualUser };
+    return { user: virtualUser, emailFound: true };
   };
 
   for (const tenantId of tenantIds) {
@@ -1231,6 +1232,7 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
         // eslint-disable-next-line no-await-in-loop
         const doc = await tenantDb.collection(collName).findOne(emailMatch, { projection });
         if (doc) {
+          emailFound = true;
           employee = doc;
           if (shouldDebugHrmsLogin()) {
             const resolvedEmail =
@@ -1366,6 +1368,10 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
         }
       });
 
+      if (doc) {
+        emailFound = true;
+      }
+
       const pickedList = getEmployeePasswordCandidates(doc);
       if (!doc || !pickedList?.length) {
         if (doc && allowEmployeeOtpFallback()) {
@@ -1413,7 +1419,7 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
     console.error(`[SSO] Central HRMS employee lookup failed: ${e.message}`);
   }
 
-  return null;
+  return { user: null, emailFound };
 };
 
 export const validateLogin = async ({ identifier, password }) => {
@@ -1424,10 +1430,13 @@ export const validateLogin = async ({ identifier, password }) => {
     return { error: { status: 400, message: "Email and password are required" } };
   }
 
+  let emailFound = false;
+
   // 1. Check SSO User collection first (admin/HR users).
   // Duplicate emails are allowed, so resolve by matching the password.
   const ssoUsers = await User.find({ email: normalizedEmail }).sort({ createdAt: -1 });
   if (ssoUsers.length) {
+    emailFound = true;
     for (const ssoUser of ssoUsers) {
       const isPasswordValid = await bcrypt.compare(normalizedPassword, ssoUser.password);
       if (isPasswordValid) {
@@ -1460,13 +1469,19 @@ export const validateLogin = async ({ identifier, password }) => {
       normalizedEmail,
       normalizedPassword
     });
+
+    if (match?.emailFound) {
+      emailFound = true;
+    }
+
     if (match?.user) {
       return match;
     }
 
-    console.log(`[SSO] No match found in any database for ${normalizedEmail}`);
-    logAuth("login_failed", { reason: "user_not_found", email: normalizedEmail });
-    return { error: { status: 401, message: "Invalid email or password" } };
+    if (emailFound) {
+      return { error: { status: 401, message: "Invalid password" } };
+    }
+    return { error: { status: 401, message: "Invalid email" } };
   } catch (empErr) {
     console.error(`[SSO] CRITICAL_AUTH_FAILURE: ${empErr.message}`);
     if (empErr.stack) console.error(empErr.stack);

@@ -23,7 +23,10 @@ const defaultCreateForm = {
   state: "",
   officeAddress: "",
   subCompanyLimit: "",
-  products: []
+  products: [],
+  productEmployeeLimits: {},
+  limitMode: "manual",
+  allProductsLimit: ""
 };
 
 const DISTRICT_AUTOFILL = {
@@ -52,11 +55,83 @@ const DISTRICT_AUTOFILL = {
   delhi: { state: "Delhi", country: "India" }
 };
 
+const typeMeta = (type) => {
+  const t = String(type || "").toLowerCase();
+  if (t === "company_create") {
+    return {
+      color: "#2563eb",
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+        </svg>
+      )
+    };
+  }
+  if (t === "company_update") {
+    return {
+      color: "#7c3aed",
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 20h9" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4 12.5-12.5Z" />
+        </svg>
+      )
+    };
+  }
+  if (t === "product_update") {
+    return {
+      color: "#059669",
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2 2 7l10 5 10-5-10-5Z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 17l10 5 10-5" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 12l10 5 10-5" />
+        </svg>
+      )
+    };
+  }
+  if (t === "module_update" || t === "hrms_module_update") {
+    return {
+      color: "#0ea5e9",
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.154-2.046-.441-2.992z" />
+        </svg>
+      )
+    };
+  }
+  if (t === "company_status") {
+    return {
+      color: "#f97316",
+      icon: (
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 2L3 14h7l-1 8 10-12h-7l1-8Z" />
+        </svg>
+      )
+    };
+  }
+  return {
+    color: "#64748b",
+    icon: (
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
+      </svg>
+    )
+  };
+};
+
 function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState(location.state?.activeTab || "company");
+  const [activeTab, setActiveTab] = useState(() => {
+    const saved = localStorage.getItem("adminActiveTab");
+    return location.state?.activeTab || saved || "company";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("adminActiveTab", activeTab);
+  }, [activeTab]);
 
   const {
     products,
@@ -109,16 +184,7 @@ function Dashboard() {
     }
   }, [location.state, navigate, location.pathname]);
 
-  // When user opens MODULES tab, jump directly to the manage screen (2nd screenshot UI).
-  const didAutoOpenModulesRef = React.useRef(false);
-  useEffect(() => {
-    if (activeTab !== "products") return;
-    if (didAutoOpenModulesRef.current) return;
-    const firstCompanyId = companies?.[0]?._id;
-    if (!firstCompanyId) return;
-    didAutoOpenModulesRef.current = true;
-    navigate(`/companies/${firstCompanyId}/products`);
-  }, [activeTab, companies, navigate]);
+
 
   const updateField = (event) => {
     const { name, value } = event.target;
@@ -193,7 +259,8 @@ function Dashboard() {
       await api.post("/companies", {
         ...form,
         adminEmail: form.adminEmail || form.email,
-        products: normalizedProducts
+        products: normalizedProducts,
+        productEmployeeLimits: form.productEmployeeLimits
       });
       appendActivity({
         type: "company_create",
@@ -240,12 +307,16 @@ function Dashboard() {
     state: "",
     officeAddress: "",
     subCompanyLimit: "",
-    products: []
+    products: [],
+    productEmployeeLimits: {},
+    limitMode: "manual",
+    allProductsLimit: ""
   });
   const [editCompanyLogoPreview, setEditCompanyLogoPreview] = useState("");
   const [companySearch, setCompanySearch] = useState("");
   const [companyPage, setCompanyPage] = useState(1);
   const [dashboardCompanyPage, setDashboardCompanyPage] = useState(1);
+  const [companiesPerPage, setCompaniesPerPage] = useState(10);
   const [expandedCompanyProducts, setExpandedCompanyProducts] = useState(() => new Set());
   const [currentActivityPage, setCurrentActivityPage] = useState(1);
   const [selectedActivity, setSelectedActivity] = useState(null);
@@ -254,7 +325,8 @@ function Dashboard() {
   const [productTabCompany, setProductTabCompany] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editProducts, setEditProducts] = useState([]);
-  const activitiesPerPage = 10;
+  const [activityModuleFilter, setActivityModuleFilter] = useState("all");
+  const [activitiesPerPage, setActivitiesPerPage] = useState(10);
 
   const renderInBody = (node) => {
     if (typeof document === "undefined") return null;
@@ -279,6 +351,10 @@ function Dashboard() {
     setSelectedCompany(company);
     setIsEditing(false);
     setEditProducts(company.products || []);
+    setEditForm((prev) => ({
+      ...prev,
+      productEmployeeLimits: company.productEmployeeLimits || {}
+    }));
   };
 
   const startEditing = () => {
@@ -359,7 +435,10 @@ function Dashboard() {
           ? ""
           : String(company.subCompanyLimit)
       ,
-      products: Array.isArray(company?.products) ? company.products : []
+      products: Array.isArray(company?.products) ? company.products : [],
+      productEmployeeLimits: company?.productEmployeeLimits || {},
+      limitMode: company?.limitMode || "manual",
+      allProductsLimit: company?.allProductsLimit || ""
     });
     setEditCompanyLogoPreview("");
     setShowEditModal(true);
@@ -419,8 +498,14 @@ function Dashboard() {
       }
 
       const [companyResult, productsResult] = await Promise.allSettled([
-        api.put(`/companies/${editCompany._id}`, payload),
-        api.put(`/companies/${editCompany._id}/products`, { products: editForm.products || [] })
+        api.put(`/companies/${editCompany._id}`, {
+          ...payload,
+          productEmployeeLimits: editForm.productEmployeeLimits
+        }),
+        api.put(`/companies/${editCompany._id}/products`, {
+          products: editForm.products || [],
+          productEmployeeLimits: editForm.productEmployeeLimits
+        })
       ]);
 
       if (companyResult.status === "rejected") {
@@ -604,19 +689,20 @@ function Dashboard() {
               </div>
             </div>
 
-            {/* Middle Section */}
-            <div className="grid two" style={{ gap: '12px' }}>
-              <div className="card" style={{ padding: '16px' }}>
+            {/* Main Section */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '16px' }}>
+              {/* Product Adoption (Left) */}
+              <div className="card" style={{ padding: '16px', height: 'fit-content' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                   <h3 style={{ fontSize: '0.95rem' }}>Product Adoption</h3>
-                  <span className="status-pill" style={{ background: '#eff6ff', color: '#2563eb', fontSize: '0.7rem' }}>Module Usage</span>
+                  <span className="status-pill" style={{ background: '#eff6ff', color: '#2563eb', fontSize: '0.7rem' }}>Usage</span>
                 </div>
                 <div style={{ display: 'grid', gap: '10px' }}>
                   {productCounts.map(item => (
                     <div key={item.name}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontSize: '0.75rem' }}>
                         <span style={{ fontWeight: 600 }}>{item.name}</span>
-                        <span className="muted">{item.count} Cos</span>
+                        <span className="muted">{item.count}</span>
                       </div>
                       <div style={{ height: '6px', background: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
                         <div style={{
@@ -631,130 +717,97 @@ function Dashboard() {
                 </div>
               </div>
 
-              <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{
-                    width: '48px', height: '48px', background: '#dcfce7', color: '#166534',
-                    borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    margin: '0 auto 10px'
-                  }}>
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                      <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
-                  <h3 style={{ fontSize: '1rem', marginBottom: '2px' }}>Core Services Healthy</h3>
-                  <p className="muted" style={{ fontSize: '0.75rem' }}>SSO & Gateway services running at peak performance.</p>
+              {/* Registered Entities (Right) */}
+              <div className="card" style={{ padding: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h3 style={{ fontSize: '0.95rem' }}>Registered Entities</h3>
+                  <button
+                    className="link-btn"
+                    style={{ background: '#f1f5f9', color: '#1e40af', padding: '4px 10px', fontSize: '0.7rem', borderRadius: '6px', fontWeight: 700 }}
+                    onClick={() => {
+                      setActiveTab('company');
+                      setCompanyPage(1);
+                    }}
+                  >
+                    Manage All
+                  </button>
                 </div>
-              </div>
-            </div>
+                {(() => {
+                  const companiesPerPage = 6;
+                  const totalPages = Math.max(1, Math.ceil((companies || []).length / companiesPerPage));
+                  const safePage = Math.min(dashboardCompanyPage, totalPages);
+                  const start = (safePage - 1) * companiesPerPage;
+                  const paged = (companies || []).slice(start, start + companiesPerPage);
 
-            {/* Bottom Companies List */}
-            <div className="card" style={{ padding: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <h3 style={{ fontSize: '0.95rem' }}>Registered Entities</h3>
-                <button
-                  className="link-btn"
-                  style={{ background: '#f1f5f9', color: '#1e40af', padding: '4px 10px', fontSize: '0.7rem', borderRadius: '6px', fontWeight: 700 }}
-                  onClick={() => {
-                    setActiveTab('company');
-                    setCompanyPage(1);
-                  }}
-                >
-                  Manage All
-                </button>
-              </div>
-              {(() => {
-                const companiesPerPage = 10;
-                const totalPages = Math.max(1, Math.ceil((companies || []).length / companiesPerPage));
-                const safePage = Math.min(dashboardCompanyPage, totalPages);
-                const start = (safePage - 1) * companiesPerPage;
-                const paged = (companies || []).slice(start, start + companiesPerPage);
-
-                return (
-                  <>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '10px' }}>
-                      {paged.map((company) => {
-                        const displayModules = (company.products || []).filter(p => !["PMS", "PSA"].includes(String(p).toUpperCase()));
-                        return (
-                          <div
-                            key={company._id}
-                            onClick={() => setSelectedCompany(company)}
-                            style={{
-                              padding: '10px', background: '#ffffff', borderRadius: '10px',
-                              border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '10px',
-                              cursor: 'pointer', transition: 'transform 0.2s',
-                            }}
-                            onMouseOver={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
-                            onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                          >
-                            <div style={{
-                              width: '32px', height: '32px', background: '#f1f5f9', color: '#1e40af',
-                              borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.8rem'
-                            }}>
-                              {(company?.name || "?")[0]}
+                  return (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '10px' }}>
+                        {paged.map((company) => {
+                          const displayModules = (company.products || []).filter(p => !["PMS", "PSA"].includes(String(p).toUpperCase()));
+                          return (
+                            <div
+                              key={company._id}
+                              onClick={() => setSelectedCompany(company)}
+                              style={{
+                                padding: '10px', background: '#ffffff', borderRadius: '10px',
+                                border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '10px',
+                                cursor: 'pointer', transition: 'all 0.2s',
+                              }}
+                              onMouseOver={(e) => {
+                                e.currentTarget.style.borderColor = '#3b82f6';
+                                e.currentTarget.style.background = '#f8fafc';
+                              }}
+                              onMouseOut={(e) => {
+                                e.currentTarget.style.borderColor = '#e2e8f0';
+                                e.currentTarget.style.background = '#ffffff';
+                              }}
+                            >
+                              <div style={{
+                                width: '32px', height: '32px', background: '#eff6ff', color: '#2563eb',
+                                borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.8rem'
+                              }}>
+                                {(company?.name || "?")[0]}
+                              </div>
+                              <div style={{ flex: 1, overflow: 'hidden' }}>
+                                <h4 style={{ margin: 0, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
+                                <p className="muted" style={{ fontSize: '0.7rem', margin: 0 }}>{displayModules.length} Modules</p>
+                              </div>
                             </div>
-                            <div style={{ flex: 1, overflow: 'hidden' }}>
-                              <h4 style={{ margin: 0, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{company.name}</h4>
-                              <p className="muted" style={{ fontSize: '0.7rem', margin: 0 }}>{displayModules.length} Modules</p>
-                            </div>
-                            {displayModules.length > 0 ? (
-                              <div style={{ width: '6px', height: '6px', background: '#22c55e', borderRadius: '50%' }} />
-                            ) : (
-                              <div style={{ width: '6px', height: '6px', background: '#cbd5e1', borderRadius: '50%' }} />
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {((companies || []).length > companiesPerPage) && (
-                      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 10, marginTop: 14 }}>
-                        <button
-                          type="button"
-                          disabled={safePage === 1}
-                          onClick={() => setDashboardCompanyPage((p) => Math.max(1, p - 1))}
-                          style={{
-                            minWidth: 44,
-                            height: 40,
-                            borderRadius: 12,
-                            border: "1px solid #e2e8f0",
-                            background: safePage === 1 ? "#f8fafc" : "#ffffff",
-                            color: "#64748b",
-                            fontWeight: 800,
-                            fontSize: "1rem",
-                            cursor: safePage === 1 ? "not-allowed" : "pointer"
-                          }}
-                        >
-                          ‹
-                        </button>
-
-                        <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "#475569" }}>
-                          Page {safePage} of {totalPages}
-                        </span>
-
-                        <button
-                          type="button"
-                          disabled={safePage === totalPages}
-                          onClick={() => setDashboardCompanyPage((p) => Math.min(totalPages, p + 1))}
-                          style={{
-                            minWidth: 44,
-                            height: 40,
-                            borderRadius: 12,
-                            border: "1px solid #e2e8f0",
-                            background: safePage === totalPages ? "#f8fafc" : "#ffffff",
-                            color: "#64748b",
-                            fontWeight: 800,
-                            fontSize: "1rem",
-                            cursor: safePage === totalPages ? "not-allowed" : "pointer"
-                          }}
-                        >
-                          ›
-                        </button>
+                          );
+                        })}
                       </div>
-                    )}
-                  </>
-                );
-              })()}
+
+                      {((companies || []).length > companiesPerPage) && (
+                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 10, marginTop: 14 }}>
+                          <button
+                            type="button"
+                            disabled={safePage === 1}
+                            onClick={() => setDashboardCompanyPage((p) => Math.max(1, p - 1))}
+                            style={{
+                              width: 32, height: 32, borderRadius: '50%', border: "1px solid #e2e8f0",
+                              background: "#ffffff", color: "#64748b", fontWeight: 800, cursor: safePage === 1 ? "not-allowed" : "pointer"
+                            }}
+                          >
+                            ‹
+                          </button>
+                          <span style={{ fontSize: "0.75rem", fontWeight: 800, color: "#475569" }}>{safePage} / {totalPages}</span>
+                          <button
+                            type="button"
+                            disabled={safePage === totalPages}
+                            onClick={() => setDashboardCompanyPage((p) => Math.min(totalPages, p + 1))}
+                            style={{
+                              width: 32, height: 32, borderRadius: '50%', border: "1px solid #e2e8f0",
+                              background: "#ffffff", color: "#64748b", fontWeight: 800, cursor: safePage === totalPages ? "not-allowed" : "pointer"
+                            }}
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
             </div>
 
             {/* Selection Modal */}
@@ -824,7 +877,6 @@ function Dashboard() {
             })
             : companies;
 
-          const companiesPerPage = 10;
           const totalCompanyPages = Math.max(1, Math.ceil(filteredCompanies.length / companiesPerPage));
           const safeCompanyPage = Math.min(companyPage, totalCompanyPages);
           const companyStartIndex = (safeCompanyPage - 1) * companiesPerPage;
@@ -883,14 +935,93 @@ function Dashboard() {
                     style={{
                       background: '#2563eb', color: 'white', padding: '10px 16px', borderRadius: '10px',
                       fontWeight: 800, fontSize: '0.85rem', border: 'none', cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', gap: '8px'
+                      display: 'flex', alignItems: 'center'
                     }}
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                    </svg>
                     Create Company
                   </button>
+
+                  <div style={{ position: 'relative' }}>
+                    <select
+                      value={companiesPerPage}
+                      onChange={(e) => {
+                        setCompaniesPerPage(Number(e.target.value));
+                        setCompanyPage(1);
+                      }}
+                      style={{
+                        padding: '10px 36px 10px 14px',
+                        borderRadius: '12px',
+                        border: '1px solid #e2e8f0',
+                        background: '#ffffff',
+                        fontWeight: 900,
+                        fontSize: '12px',
+                        color: '#0f172a',
+                        cursor: 'pointer',
+                        appearance: 'none',
+                        outline: 'none',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                        minWidth: '130px',
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseOver={(e) => e.currentTarget.style.borderColor = '#cbd5e1'}
+                      onMouseOut={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}
+                    >
+                      <option value="2">2 Records</option>
+                      <option value="5">5 Records</option>
+                      <option value="10">10 Records</option>
+                      <option value="15">15 Records</option>
+                    </select>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#64748b' }}>
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '4px', alignItems: 'center', padding: '2px', marginLeft: '8px' }}>
+                    <button
+                      disabled={companyPage === 1}
+                      onClick={() => setCompanyPage(p => p - 1)}
+                      style={{
+                        width: '38px', height: '38px', borderRadius: '50%', 
+                        border: 'none',
+                        background: 'transparent',
+                        color: companyPage === 1 ? '#cbd5e1' : '#475569', 
+                        cursor: companyPage === 1 ? 'not-allowed' : 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'all 0.2s ease'
+                      }}
+                      onMouseOver={(e) => { if(companyPage !== 1) e.currentTarget.style.background = '#f1f5f9'; }}
+                      onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                        <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#1e293b', padding: '0 8px', minWidth: '40px', textAlign: 'center' }}>
+                      {companyPage}/{totalCompanyPages || 1}
+                    </span>
+
+                    <button
+                      disabled={companyPage === totalCompanyPages || totalCompanyPages === 0}
+                      onClick={() => setCompanyPage(p => p + 1)}
+                      style={{
+                        width: '38px', height: '38px', borderRadius: '50%', 
+                        border: 'none',
+                        background: 'transparent',
+                        color: (companyPage === totalCompanyPages || totalCompanyPages === 0) ? '#cbd5e1' : '#475569', 
+                        cursor: (companyPage === totalCompanyPages || totalCompanyPages === 0) ? 'not-allowed' : 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'all 0.2s ease'
+                      }}
+                      onMouseOver={(e) => { if(companyPage !== totalCompanyPages && totalCompanyPages !== 0) e.currentTarget.style.background = '#f1f5f9'; }}
+                      onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                        <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1137,62 +1268,6 @@ function Dashboard() {
                     </div>
                   ))}
                 </div>
-
-                {filteredCompanies.length > companiesPerPage && (
-                  <div
-                    style={{
-                      padding: '12px 16px',
-                      borderTop: '1px solid #f1f5f9',
-                      background: '#ffffff',
-                      display: 'flex',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      gap: '10px'
-                    }}
-                  >
-                    <button
-                      type="button"
-                      disabled={safeCompanyPage === 1}
-                      onClick={() => setCompanyPage((p) => Math.max(1, p - 1))}
-                      style={{
-                        minWidth: '44px',
-                        height: '40px',
-                        borderRadius: '12px',
-                        border: '1px solid #e2e8f0',
-                        background: safeCompanyPage === 1 ? '#f8fafc' : '#ffffff',
-                        color: '#64748b',
-                        fontWeight: 800,
-                        fontSize: '1rem',
-                        cursor: safeCompanyPage === 1 ? 'not-allowed' : 'pointer'
-                      }}
-                    >
-                      ‹
-                    </button>
-
-                    <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#475569' }}>
-                      Page {safeCompanyPage} of {totalCompanyPages}
-                    </span>
-
-                    <button
-                      type="button"
-                      disabled={safeCompanyPage === totalCompanyPages}
-                      onClick={() => setCompanyPage((p) => Math.min(totalCompanyPages, p + 1))}
-                      style={{
-                        minWidth: '44px',
-                        height: '40px',
-                        borderRadius: '12px',
-                        border: '1px solid #e2e8f0',
-                        background: safeCompanyPage === totalCompanyPages ? '#f8fafc' : '#ffffff',
-                        color: '#64748b',
-                        fontWeight: 800,
-                        fontSize: '1rem',
-                        cursor: safeCompanyPage === totalCompanyPages ? 'not-allowed' : 'pointer'
-                      }}
-                    >
-                      ›
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
           );
@@ -1327,78 +1402,33 @@ function Dashboard() {
           (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
         );
 
-        const typeMeta = (type) => {
-          const t = String(type || "").toLowerCase();
-          if (t === "company_create") {
-            return {
-              color: "#2563eb",
-              icon: (
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                </svg>
-              )
-            };
-          }
-          if (t === "company_update") {
-            return {
-              color: "#7c3aed",
-              icon: (
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 20h9" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4 12.5-12.5Z" />
-                </svg>
-              )
-            };
-          }
-          if (t === "product_update") {
-            return {
-              color: "#059669",
-              icon: (
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2 2 7l10 5 10-5-10-5Z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 17l10 5 10-5" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 12l10 5 10-5" />
-                </svg>
-              )
-            };
-          }
-          if (t === "module_update" || t === "hrms_module_update") {
-            return {
-              color: "#0ea5e9",
-              icon: (
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.154-2.046-.441-2.992z" />
-                </svg>
-              )
-            };
-          }
-          if (t === "company_status") {
-            return {
-              color: "#f97316",
-              icon: (
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 2L3 14h7l-1 8 10-12h-7l1-8Z" />
-                </svg>
-              )
-            };
-          }
-          return {
-            color: "#64748b",
-            icon: (
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="18" height="18">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
-              </svg>
-            )
-          };
-        };
-
         const search = String(activitySearch || "").trim().toLowerCase();
-        const filteredActivities = search
-          ? activityItems.filter((a) => {
-            const hay = `${a.title || ""} ${a.description || ""}`.toLowerCase();
-            return hay.includes(search);
-          })
-          : activityItems;
+        const modFilt = String(activityModuleFilter || "all").toLowerCase();
+
+        const filteredActivities = activityItems.filter((a) => {
+          const title = String(a.title || "").toLowerCase();
+          const desc = String(a.description || "").toLowerCase();
+          const hay = `${title} ${desc}`;
+          
+          // Search match
+          const matchesSearch = !search || hay.includes(search);
+          if (!matchesSearch) return false;
+
+          // Module match
+          if (modFilt === "all") return true;
+          
+          // Check if module name is in text
+          if (hay.includes(modFilt)) return true;
+
+          // Check if module name is in details
+          const detailStr = JSON.stringify(a.details || "").toLowerCase();
+          if (detailStr.includes(modFilt)) return true;
+
+          // Special case for module update types
+          if (modFilt === "hrms" && a.type === "hrms_module_update") return true;
+
+          return false;
+        });
 
         const totalPages = Math.ceil(filteredActivities.length / activitiesPerPage);
         const startIndex = (currentActivityPage - 1) * activitiesPerPage;
@@ -1412,9 +1442,9 @@ function Dashboard() {
         }).length;
 
         return (
-          <div style={{ background: '#ffffff', padding: 0, height: '100%', width: '100%', margin: '-16px -16px -16px -8px' }}>
-            <div className="card" style={{ padding: '0', overflow: 'hidden', height: '100%', width: '100%', display: 'flex', flexDirection: 'column', border: 'none', borderRadius: 0 }}>
-              <div style={{ padding: '18px 18px 12px', background: '#ffffff', borderBottom: '1px solid #f1f5f9' }}>
+          <div style={{ height: '100%', width: '100%' }}>
+            <div className="card" style={{ padding: '0', overflow: 'hidden', height: '100%', width: '100%', display: 'flex', flexDirection: 'column', border: 'none', borderRadius: 0, background: 'transparent' }}>
+              <div style={{ padding: '18px 18px 12px', borderBottom: '1px solid #f1f5f9' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px' }}>
                   <div style={{ borderRadius: '14px', border: '1px solid #eef2f6', background: '#ffffff', padding: '14px 16px', position: 'relative', overflow: 'hidden' }}>
                     <div style={{ position: 'absolute', left: 0, top: 0, height: 2, width: '100%', background: 'linear-gradient(90deg, #ec4899 0%, #a855f7 100%)' }} />
@@ -1494,64 +1524,105 @@ function Dashboard() {
                     </svg>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      await loadData();
-                      setCurrentActivityPage(1);
-                    }}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '10px 14px',
-                      borderRadius: '12px',
-                      border: '1px solid #e2e8f0',
-                      background: '#ffffff',
-                      fontWeight: 900,
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase',
-                      fontSize: '12px',
-                      color: '#0f172a',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                      <path d="M21 3v6h-6" />
-                    </svg>
-                    Refresh History
-                  </button>
+                  <div style={{ display: 'flex', gap: '4px', background: '#f8fafc', padding: '4px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                    {['All', 'HRMS', 'CRM', 'TMS', 'DMS'].map((mod) => (
+                      <button
+                        key={mod}
+                        onClick={() => {
+                          setActivityModuleFilter(mod.toLowerCase());
+                          setCurrentActivityPage(1);
+                        }}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          fontSize: '0.75rem',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          background: activityModuleFilter === mod.toLowerCase() ? '#ffffff' : 'transparent',
+                          color: activityModuleFilter === mod.toLowerCase() ? '#2563eb' : '#64748b',
+                          boxShadow: activityModuleFilter === mod.toLowerCase() ? '0 2px 4px rgba(0,0,0,0.05)' : 'none'
+                        }}
+                      >
+                        {mod}
+                      </button>
+                    ))}
+                  </div>
 
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '4px', background: '#f1f5f9', borderRadius: '10px' }}>
+                  <div style={{ position: 'relative' }}>
+                    <select
+                      value={activitiesPerPage}
+                      onChange={(e) => {
+                        setActivitiesPerPage(Number(e.target.value));
+                        setCurrentActivityPage(1);
+                      }}
+                      style={{
+                        padding: '10px 36px 10px 14px',
+                        borderRadius: '12px',
+                        border: '1px solid #e2e8f0',
+                        background: '#ffffff',
+                        fontWeight: 900,
+                        fontSize: '12px',
+                        color: '#0f172a',
+                        cursor: 'pointer',
+                        appearance: 'none',
+                        outline: 'none',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                        minWidth: '130px',
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseOver={(e) => e.currentTarget.style.borderColor = '#cbd5e1'}
+                      onMouseOut={(e) => e.currentTarget.style.borderColor = '#e2e8f0'}
+                    >
+                      <option value="2">2 Records</option>
+                      <option value="5">5 Records</option>
+                      <option value="10">10 Records</option>
+                      <option value="15">15 Records</option>
+                    </select>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#64748b' }}>
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '4px', borderRadius: '10px' }}>
                     <button
                       disabled={currentActivityPage === 1}
                       onClick={() => setCurrentActivityPage(p => p - 1)}
                       style={{
-                        width: '32px', height: '32px', borderRadius: '8px', border: 'none',
-                        background: currentActivityPage === 1 ? 'transparent' : 'white',
-                        color: '#64748b', cursor: currentActivityPage === 1 ? 'not-allowed' : 'pointer',
+                        width: '44px', height: '44px', borderRadius: '50%', 
+                        border: 'none',
+                        background: 'transparent',
+                        color: currentActivityPage === 1 ? '#cbd5e1' : '#475569', 
+                        cursor: currentActivityPage === 1 ? 'not-allowed' : 'pointer',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        boxShadow: currentActivityPage === 1 ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
+                        transition: 'all 0.2s ease'
                       }}
+                      onMouseOver={(e) => { if(currentActivityPage !== 1) e.currentTarget.style.background = '#f1f5f9'; }}
+                      onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; }}
                     >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </button>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#475569', padding: '0 8px' }}>Page {currentActivityPage} of {totalPages || 1}</span>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#1e293b', padding: '0 12px' }}>Page {currentActivityPage} of {totalPages || 1}</span>
                     <button
                       disabled={currentActivityPage === totalPages || totalPages === 0}
                       onClick={() => setCurrentActivityPage(p => p + 1)}
                       style={{
-                        width: '32px', height: '32px', borderRadius: '8px', border: 'none',
-                        background: (currentActivityPage === totalPages || totalPages === 0) ? 'transparent' : 'white',
-                        color: '#64748b', cursor: (currentActivityPage === totalPages || totalPages === 0) ? 'not-allowed' : 'pointer',
+                        width: '44px', height: '44px', borderRadius: '50%', 
+                        border: 'none',
+                        background: 'transparent',
+                        color: (currentActivityPage === totalPages || totalPages === 0) ? '#cbd5e1' : '#475569', 
+                        cursor: (currentActivityPage === totalPages || totalPages === 0) ? 'not-allowed' : 'pointer',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        boxShadow: (currentActivityPage === totalPages || totalPages === 0) ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
+                        transition: 'all 0.2s ease'
                       }}
+                      onMouseOver={(e) => { if(currentActivityPage !== totalPages && totalPages !== 0) e.currentTarget.style.background = '#f1f5f9'; }}
+                      onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; }}
                     >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                         <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </button>
@@ -1565,23 +1636,19 @@ function Dashboard() {
                     <p style={{ color: '#94a3b8', fontWeight: 500 }}>No system activities recorded yet.</p>
                   </div>
                 ) : (
-                  <div style={{ display: 'grid', gap: '14px', position: 'relative' }}>
+                  <div style={{ display: 'grid', gap: '0px', position: 'relative' }}>
                     {pagedActivities.map((activity) => (
                       <div
                         key={activity.id}
                         style={{
-                          borderRadius: 16,
-                          background: "#ffffff",
-                          border: "1px solid #eef2f6",
-                          padding: "16px 20px",
+                          background: "transparent",
+                          borderBottom: "1px solid #f1f5f9",
+                          padding: "10px 4px",
                           display: "flex",
                           gap: 20,
                           alignItems: "center",
-                          transition: "all 0.2s ease",
-                          boxShadow: "0 2px 4px rgba(0,0,0,0.02)"
+                          transition: "all 0.2s ease"
                         }}
-                        onMouseOver={(e) => (e.currentTarget.style.borderColor = "#2563eb")}
-                        onMouseOut={(e) => (e.currentTarget.style.borderColor = "#eef2f6")}
                       >
                         <div style={{
                           width: '44px', height: '44px', background: 'white', border: `2px solid ${typeMeta(activity.type).color}22`,
@@ -1595,17 +1662,18 @@ function Dashboard() {
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <span style={{ 
-                              fontSize: '0.9rem', 
-                              fontWeight: 900, 
-                              color: '#1e293b',
+                              fontSize: '0.85rem', 
+                              fontWeight: 800, 
+                              color: '#64748b',
                               padding: '2px 8px',
-                              background: '#f1f5f9',
-                              borderRadius: '6px'
+                              background: '#f8fafc',
+                              borderRadius: '6px',
+                              border: '1px solid #f1f5f9'
                             }}>
                               {activity.details?.companyName || "System"}
                             </span>
                             <span style={{ 
-                              fontSize: '0.8rem', 
+                              fontSize: '0.75rem', 
                               fontWeight: 700, 
                               color: typeMeta(activity.type).color,
                               textTransform: 'uppercase',
@@ -1614,38 +1682,52 @@ function Dashboard() {
                               {activity.title}
                             </span>
                           </div>
-                          <p style={{ fontSize: '0.85rem', margin: '4px 0 0 0', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <p style={{ fontSize: '0.8rem', margin: '4px 0 0 0', color: '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 500 }}>
                             {activity.description}
                           </p>
                         </div>
 
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px', flexShrink: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8' }}>
-                              {new Date(activity.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                            {activity.details ? (
-                              <button
-                                onClick={() => setSelectedActivity(activity)}
-                                style={{
-                                  background: '#eff6ff',
-                                  color: '#2563eb',
-                                  border: 'none',
-                                  padding: '6px 12px',
-                                  borderRadius: '8px',
-                                  fontSize: '0.7rem',
-                                  fontWeight: 800,
-                                  cursor: 'pointer',
-                                  transition: 'all 0.2s'
-                                }}
-                                onMouseOver={(e) => (e.currentTarget.style.background = '#dbeafe')}
-                                onMouseOut={(e) => (e.currentTarget.style.background = '#eff6ff')}
-                              >
-                                View Details
-                              </button>
-                            ) : null}
+                        {activity.details && (
+                          <div style={{ flexShrink: 0, width: '120px', display: 'flex', justifyContent: 'center' }}>
+                            <button
+                              onClick={() => setSelectedActivity(activity)}
+                              style={{
+                                width: '38px',
+                                height: '38px',
+                                background: '#eff6ff',
+                                color: '#2563eb',
+                                border: 'none',
+                                borderRadius: '12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                boxShadow: '0 2px 5px rgba(37, 99, 235, 0.1)'
+                              }}
+                              onMouseOver={(e) => {
+                                e.currentTarget.style.background = '#dbeafe';
+                                e.currentTarget.style.transform = 'translateY(-1px)';
+                              }}
+                              onMouseOut={(e) => {
+                                e.currentTarget.style.background = '#eff6ff';
+                                e.currentTarget.style.transform = 'translateY(0)';
+                              }}
+                              title="View Details"
+                            >
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                                <circle cx="12" cy="12" r="3" />
+                              </svg>
+                            </button>
                           </div>
-                          <span style={{ fontSize: '0.65rem', color: '#cbd5e1', fontWeight: 600 }}>
+                        )}
+
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', flexShrink: 0, minWidth: '80px' }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569' }}>
+                            {new Date(activity.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 600 }}>
                             {new Date(activity.time).toLocaleDateString()}
                           </span>
                         </div>
@@ -1655,33 +1737,7 @@ function Dashboard() {
                 )}
               </div>
 
-              {totalPages > 1 && (
-                <div style={{
-                  padding: '16px 24px',
-                  borderTop: '1px solid #f1f5f9',
-                  background: '#ffffff',
-                  display: 'flex',
-                  justifyContent: 'center',
-                  gap: '8px'
-                }}>
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setCurrentActivityPage(page)}
-                      style={{
-                        minWidth: '32px', height: '32px', borderRadius: '8px', border: 'none',
-                        background: currentActivityPage === page ? '#2563eb' : 'transparent',
-                        color: currentActivityPage === page ? 'white' : '#64748b',
-                        fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        boxShadow: currentActivityPage === page ? '0 4px 12px rgba(37, 99, 235, 0.3)' : 'none'
-                      }}
-                    >
-                      {page}
-                    </button>
-                  ))}
-                </div>
-              )}
+
             </div>
           </div>
         );
@@ -1727,12 +1783,12 @@ function Dashboard() {
                         <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#eff6ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.1rem' }}>
                           {(company?.name || "?").charAt(0).toUpperCase()}
                         </div>
-                        <div style={{ overflow: 'hidden' }}>
-                          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <div style={{ overflow: 'hidden', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap' }}>
                             {company.name}
                           </div>
-                          <div className="muted" style={{ fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {company.email}
+                          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b', whiteSpace: 'nowrap' }}>
+                            ({company.email})
                           </div>
                         </div>
                       </div>
@@ -2128,16 +2184,16 @@ function Dashboard() {
                         />
                       </div>
                     </div>
-                  </div>
 
-                  <div
-                    style={{
-                      marginTop: "14px",
-                      display: "grid",
-                      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                      gap: "14px"
-                    }}
-                  >
+                    <div
+                      style={{
+                        gridColumn: "1 / -1",
+                        marginTop: "14px",
+                        display: "grid",
+                        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                        gap: "14px"
+                      }}
+                    >
                     <div>
                       <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
                         COMPANY TYPE
@@ -2153,7 +2209,6 @@ function Dashboard() {
                         <option value="PARTNERSHIP">Partnership</option>
                       </select>
                     </div>
-
                     <div>
                       <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
                         GST NUMBER
@@ -2165,7 +2220,6 @@ function Dashboard() {
                         style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
                       />
                     </div>
-
                     <div>
                       <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
                         PAN NUMBER
@@ -2177,7 +2231,6 @@ function Dashboard() {
                         style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
                       />
                     </div>
-
                     <div>
                       <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
                         REGISTRATION NO
@@ -2189,31 +2242,6 @@ function Dashboard() {
                         style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
                       />
                     </div>
-
-                    <div>
-                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
-                        DISTRICT
-                      </label>
-                      <input
-                        value={editForm.district}
-                        onChange={(e) => {
-                          const cleaned = String(e.target.value || "")
-                            .replace(/[^a-zA-Z\s]/g, "")
-                            .replace(/\s+/g, " ")
-                            .trimStart();
-                          const key = cleaned.trim().toLowerCase();
-                          const match = DISTRICT_AUTOFILL[key];
-                          if (match) {
-                            setEditForm((p) => ({ ...p, district: cleaned, state: match.state, country: match.country }));
-                          } else {
-                            setEditForm((p) => ({ ...p, district: cleaned }));
-                          }
-                        }}
-                        placeholder="District (optional)"
-                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
-                      />
-                    </div>
-
                     <div>
                       <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
                         COUNTRY
@@ -2225,42 +2253,67 @@ function Dashboard() {
                         style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
                       />
                     </div>
-
-                    {/* State + Office Address on one line */}
-                    <div style={{ gridColumn: "1 / -1", display: "grid", gridTemplateColumns: "1fr 2fr", gap: "14px", marginTop: "14px" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                        STATE
+                      </label>
+                      <input
+                        value={editForm.state}
+                        onChange={(e) => setEditForm((p) => ({ ...p, state: e.target.value }))}
+                        placeholder="State (optional)"
+                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
+                        OFFICE ADDRESS
+                      </label>
+                      <input
+                        value={editForm.officeAddress}
+                        onChange={(e) => setEditForm((p) => ({ ...p, officeAddress: e.target.value }))}
+                        placeholder="Office address (optional)"
+                        style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
+                      />
+                    </div>
                       <div>
                         <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
-                          STATE
+                          LIMIT MODE
                         </label>
-                        <input
-                          value={editForm.state}
-                          onChange={(e) => setEditForm((p) => ({ ...p, state: e.target.value }))}
-                          placeholder="State (optional)"
-                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 900, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: "8px" }}>
-                          OFFICE ADDRESS
-                        </label>
-                        <input
-                          value={editForm.officeAddress}
-                          onChange={(e) => setEditForm((p) => ({ ...p, officeAddress: e.target.value }))}
-                          placeholder="Office address (optional)"
-                          style={{ width: "100%", padding: "12px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc" }}
-                        />
+                        <select
+                          value={editForm.limitMode}
+                          onChange={(e) => setEditForm(p => ({ ...p, limitMode: e.target.value }))}
+                          style={{ width: "100%", padding: "11px 14px", borderRadius: "14px", border: "1px solid transparent", outline: "none", background: "#f8fafc", fontWeight: 700, fontSize: "0.85rem", color: "#475569" }}
+                        >
+                          <option value="manual">MANUAL</option>
+                          <option value="all">ALL</option>
+                        </select>
                       </div>
                     </div>
+
                   </div>
 
-                  <div style={{ marginTop: "10px" }}>
-                    <div style={{ fontSize: "0.78rem", fontWeight: 900, color: "#475569", marginBottom: "10px" }}>
-                      Product Select
+                  <div style={{ marginTop: "20px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                      <div style={{ fontSize: "0.78rem", fontWeight: 900, color: "#475569" }}>
+                        Product Select
+                      </div>
+                      {editForm.limitMode === "all" && (
+                        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                          <span style={{ fontSize: "0.72rem", fontWeight: 900, color: "#94a3b8" }}>ALL LIMIT:</span>
+                          <input
+                            type="number"
+                            value={editForm.allProductsLimit}
+                            onChange={(e) => setEditForm(p => ({ ...p, allProductsLimit: e.target.value }))}
+                            placeholder="Limit"
+                            style={{ width: "100px", padding: "6px 12px", borderRadius: "10px", border: "1px solid #e2e8f0", background: "#f8fafc", fontWeight: 700, fontSize: "0.8rem", outline: "none", color: "#475569" }}
+                          />
+                        </div>
+                      )}
                     </div>
                     <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
                       {selectableProductNames.map((productName) => (
-                        <label
-                          key={productName}
+                        <div key={productName} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                          <label
                           style={{
                             padding: "10px 18px",
                             cursor: "pointer",
@@ -2289,9 +2342,34 @@ function Dashboard() {
                           />
                           {productName}
                         </label>
-                      ))}
-                    </div>
+                        {editForm.limitMode === "manual" && (editForm.products || []).includes(productName) && (
+                          <input
+                            type="number"
+                            placeholder="Emp Limit"
+                            value={editForm.productEmployeeLimits[productName] || ""}
+                            onChange={(e) =>
+                              setEditForm((p) => ({
+                                ...p,
+                                productEmployeeLimits: {
+                                  ...p.productEmployeeLimits,
+                                  [productName]: e.target.value
+                                }
+                              }))
+                            }
+                            style={{
+                              width: "100px",
+                              padding: "6px 10px",
+                              borderRadius: "8px",
+                              border: "1px solid #e2e8f0",
+                              fontSize: "0.8rem",
+                              outline: "none"
+                            }}
+                          />
+                        )}
+                      </div>
+                    ))}
                   </div>
+                </div>
 
                   {error ? (
                     <div
@@ -2638,27 +2716,25 @@ function Dashboard() {
                         gridColumn: '1 / -1',
                         marginTop: '14px',
                         display: 'grid',
-                        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
                         gap: '14px'
                       }}
                     >
                       <div>
-                        <div>
-                          <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                            COMPANY TYPE
-                          </label>
-                          <select
-                            name="companyType"
-                            value={form.companyType}
-                            onChange={updateField}
-                            style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                          >
-                            <option value="">Select Type</option>
-                            <option value="PRIVATE">Private</option>
-                            <option value="PUBLIC">Public</option>
-                            <option value="PARTNERSHIP">Partnership</option>
-                          </select>
-                        </div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          COMPANY TYPE
+                        </label>
+                        <select
+                          name="companyType"
+                          value={form.companyType}
+                          onChange={updateField}
+                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
+                        >
+                          <option value="">Select Type</option>
+                          <option value="PRIVATE">Private</option>
+                          <option value="PUBLIC">Public</option>
+                          <option value="PARTNERSHIP">Partnership</option>
+                        </select>
                       </div>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
@@ -2698,18 +2774,6 @@ function Dashboard() {
                       </div>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
-                          DISTRICT
-                        </label>
-                        <input
-                          name="district"
-                          value={form.district}
-                          onChange={updateField}
-                          placeholder="District (optional)"
-                          style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                           COUNTRY
                         </label>
                         <input
@@ -2720,10 +2784,6 @@ function Dashboard() {
                           style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                         />
                       </div>
-                    </div>
-
-                    {/* State + Office Address on one line */}
-                    <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '14px' }}>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
                           STATE
@@ -2748,37 +2808,87 @@ function Dashboard() {
                           style={{ width: '100%', padding: '12px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc' }}
                         />
                       </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 900, letterSpacing: '0.12em', color: '#94a3b8', marginBottom: '8px' }}>
+                          LIMIT MODE
+                        </label>
+                        <select
+                          value={form.limitMode}
+                          onChange={(e) => setForm(p => ({ ...p, limitMode: e.target.value }))}
+                          style={{ width: '100%', padding: '11px 14px', borderRadius: '14px', border: '1px solid transparent', outline: 'none', background: '#f8fafc', fontWeight: 700, fontSize: '0.85rem', color: '#475569' }}
+                        >
+                          <option value="manual">MANUAL</option>
+                          <option value="all">ALL</option>
+                        </select>
+                      </div>
                     </div>
 
-                    <div style={{ marginTop: '10px', gridColumn: '1 / -1' }}>
-                      <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#475569', marginBottom: '10px' }}>
-                        Product Select
+                    <div style={{ marginTop: '20px', gridColumn: '1 / -1' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <div style={{ fontSize: '0.78rem', fontWeight: 900, color: '#475569' }}>
+                          Product Select
+                        </div>
+                        {form.limitMode === 'all' && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 900, color: '#94a3b8' }}>ALL LIMIT:</span>
+                            <input
+                              type="number"
+                              value={form.allProductsLimit}
+                              onChange={(e) => setForm(p => ({ ...p, allProductsLimit: e.target.value }))}
+                              placeholder="Limit"
+                              style={{ width: '100px', padding: '6px 12px', borderRadius: '10px', border: '1px solid #e2e8f0', background: '#f8fafc', fontWeight: 700, fontSize: '0.8rem', outline: 'none', color: '#475569' }}
+                            />
+                          </div>
+                        )}
                       </div>
                       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                         {selectableProductNames.map((productName) => (
-                          <label
-                            key={productName}
-                            style={{
-                              padding: '10px 18px',
-                              cursor: 'pointer',
-                              borderRadius: '14px',
-                              border: '1px solid',
-                              borderColor: form.products.includes(productName) ? '#2563eb' : '#e2e8f0',
-                              background: form.products.includes(productName) ? '#eff6ff' : '#ffffff',
-                              color: form.products.includes(productName) ? '#1d4ed8' : '#64748b',
-                              fontSize: '0.9rem',
-                              fontWeight: 700,
-                              transition: 'all 0.2s ease'
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={form.products.includes(productName)}
-                              onChange={() => toggleProduct(productName)}
-                              style={{ display: 'none' }}
-                            />
-                            {productName}
-                          </label>
+                          <div key={productName} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <label
+                              style={{
+                                padding: '10px 18px',
+                                cursor: 'pointer',
+                                borderRadius: '14px',
+                                border: '1px solid',
+                                borderColor: form.products.includes(productName) ? '#2563eb' : '#e2e8f0',
+                                background: form.products.includes(productName) ? '#eff6ff' : '#ffffff',
+                                color: form.products.includes(productName) ? '#1d4ed8' : '#64748b',
+                                fontSize: '0.9rem',
+                                fontWeight: 700,
+                                transition: 'all 0.2s ease'
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={form.products.includes(productName)}
+                                onChange={() => toggleProduct(productName)}
+                                style={{ display: 'none' }}
+                              />
+                              {productName}
+                            </label>
+                            {form.limitMode === "manual" && form.products.includes(productName) && (
+                              <input
+                                type="number"
+                                placeholder="Emp Limit"
+                                value={form.productEmployeeLimits[productName] || ""}
+                                onChange={(e) => setForm(p => ({
+                                  ...p,
+                                  productEmployeeLimits: {
+                                    ...p.productEmployeeLimits,
+                                    [productName]: e.target.value
+                                  }
+                                }))}
+                                style={{
+                                  width: '100px',
+                                  padding: '6px 10px',
+                                  borderRadius: '8px',
+                                  border: '1px solid #e2e8f0',
+                                  fontSize: '0.8rem',
+                                  outline: 'none'
+                                }}
+                              />
+                            )}
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -2819,7 +2929,7 @@ function Dashboard() {
                         opacity: submitting ? 0.85 : 1
                       }}
                     >
-                      {submitting ? "CREATING..." : "CREATE COMPANY  +"}
+                      {submitting ? "CREATING..." : "CREATE COMPANY"}
                     </button>
                   </div>
                 </div>
@@ -2909,6 +3019,20 @@ function Dashboard() {
                     </div>
                   </div>
 
+                  {selectedActivity.details?.companyEmail && (
+                    <div style={{ padding: "12px", background: "#f8fafc", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontSize: "0.65rem", fontWeight: 900, color: "#64748b", textTransform: "uppercase", marginBottom: "4px" }}>Contact Email</div>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 800, color: "#0f172a" }}>{selectedActivity.details.companyEmail}</div>
+                    </div>
+                  )}
+
+                  {selectedActivity.details?.status && (
+                    <div style={{ padding: "12px", background: selectedActivity.details.status === 'ACTIVE' ? "#f0fdf4" : "#fff7ed", borderRadius: "14px", border: "1px solid", borderColor: selectedActivity.details.status === 'ACTIVE' ? "#bbf7d0" : "#ffedd5" }}>
+                      <div style={{ fontSize: "0.65rem", fontWeight: 900, color: selectedActivity.details.status === 'ACTIVE' ? "#15803d" : "#9a3412", textTransform: "uppercase", marginBottom: "4px" }}>Updated Status</div>
+                      <div style={{ fontSize: "0.9rem", fontWeight: 800, color: selectedActivity.details.status === 'ACTIVE' ? "#166534" : "#c2410c" }}>{selectedActivity.details.status}</div>
+                    </div>
+                  )}
+
                   {selectedActivity.details?.product && (
                     <div style={{ padding: "12px", background: "#eff6ff", borderRadius: "14px", border: "1px solid #dbeafe" }}>
                       <div style={{ fontSize: "0.65rem", fontWeight: 900, color: "#2563eb", textTransform: "uppercase", marginBottom: "4px" }}>Product Affected</div>
@@ -2916,9 +3040,20 @@ function Dashboard() {
                     </div>
                   )}
 
+                  {Array.isArray(selectedActivity.details?.products) && selectedActivity.details.products.length > 0 && (
+                    <div style={{ padding: "16px", background: "#f0fdf4", borderRadius: "16px", border: "1px solid #bbf7d0" }}>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#15803d", textTransform: "uppercase", marginBottom: "8px" }}>Products Assigned</div>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {selectedActivity.details.products.map(item => (
+                          <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#166534", border: "1px solid #dcfce7" }}>{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {Array.isArray(selectedActivity.details?.added) && selectedActivity.details.added.length > 0 && (
                     <div style={{ padding: "16px", background: "#f0fdf4", borderRadius: "16px", border: "1px solid #bbf7d0" }}>
-                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#15803d", textTransform: "uppercase", marginBottom: "8px" }}>Items Added</div>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#15803d", textTransform: "uppercase", marginBottom: "8px" }}>Items Added / Activated</div>
                       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         {selectedActivity.details.added.map(item => (
                           <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#166534", border: "1px solid #dcfce7" }}>{item}</span>
@@ -2929,7 +3064,7 @@ function Dashboard() {
 
                   {Array.isArray(selectedActivity.details?.removed) && selectedActivity.details.removed.length > 0 && (
                     <div style={{ padding: "16px", background: "#fef2f2", borderRadius: "16px", border: "1px solid #fecaca" }}>
-                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#b91c1c", textTransform: "uppercase", marginBottom: "8px" }}>Items Removed</div>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#b91c1c", textTransform: "uppercase", marginBottom: "8px" }}>Items Removed / Deactivated</div>
                       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         {selectedActivity.details.removed.map(item => (
                           <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#991b1b", border: "1px solid #fee2e2" }}>{item}</span>
@@ -2940,10 +3075,13 @@ function Dashboard() {
 
                   {Array.isArray(selectedActivity.details?.activated) && selectedActivity.details.activated.length > 0 && (
                     <div style={{ padding: "16px", background: "#f0fdf4", borderRadius: "16px", border: "1px solid #bbf7d0" }}>
-                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#15803d", textTransform: "uppercase", marginBottom: "8px" }}>Modules Activated</div>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#15803d", textTransform: "uppercase", marginBottom: "8px", display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e' }} />
+                        Modules Activated
+                      </div>
                       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         {selectedActivity.details.activated.map(item => (
-                          <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#166534", border: "1px solid #dcfce7" }}>{item}</span>
+                          <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#166534", border: "1px solid #dcfce7", boxShadow: '0 2px 4px rgba(34, 197, 94, 0.1)' }}>{item}</span>
                         ))}
                       </div>
                     </div>
@@ -2951,10 +3089,24 @@ function Dashboard() {
 
                   {Array.isArray(selectedActivity.details?.deactivated) && selectedActivity.details.deactivated.length > 0 && (
                     <div style={{ padding: "16px", background: "#fef2f2", borderRadius: "16px", border: "1px solid #fecaca" }}>
-                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#b91c1c", textTransform: "uppercase", marginBottom: "8px" }}>Modules Deactivated</div>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#b91c1c", textTransform: "uppercase", marginBottom: "8px", display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444' }} />
+                        Modules Deactivated
+                      </div>
                       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         {selectedActivity.details.deactivated.map(item => (
-                          <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#991b1b", border: "1px solid #fee2e2" }}>{item}</span>
+                          <span key={item} style={{ background: "white", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#991b1b", border: "1px solid #fee2e2", boxShadow: '0 2px 4px rgba(239, 68, 68, 0.1)' }}>{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {Array.isArray(selectedActivity.details?.allEnabled) && selectedActivity.details.allEnabled.length > 0 && (
+                    <div style={{ padding: "16px", background: "#f8fafc", borderRadius: "16px", border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontSize: "0.75rem", fontWeight: 900, color: "#475569", textTransform: "uppercase", marginBottom: "12px" }}>Currently Active Modules</div>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {selectedActivity.details.allEnabled.map(item => (
+                          <span key={item} style={{ background: "#ffffff", padding: "4px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: 700, color: "#1e293b", border: "1px solid #f1f5f9" }}>{item}</span>
                         ))}
                       </div>
                     </div>
@@ -2980,12 +3132,7 @@ function Dashboard() {
                 </div>
               </div>
               
-              <div style={{ padding: "16px 24px", background: "#f8fafc", borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "flex-end" }}>
-                <button 
-                  onClick={() => setSelectedActivity(null)} 
-                  style={{ background: '#2563eb', color: 'white', border: 'none', padding: '10px 24px', borderRadius: '12px', fontWeight: 800, cursor: 'pointer', boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)' }}
-                >Close</button>
-              </div>
+
             </div>
           </div>
         )}

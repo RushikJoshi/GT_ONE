@@ -38,7 +38,8 @@ export const createCompany = async (req, res) => {
       country,
       state,
       officeAddress,
-      subCompanyLimit
+      subCompanyLimit,
+      productEmployeeLimits
     } = req.body || {};
 
     if (!name || !email) {
@@ -61,7 +62,8 @@ export const createCompany = async (req, res) => {
       state,
       officeAddress,
       subCompanyLimit,
-      products: products || []
+      products: products || [],
+      productEmployeeLimits: productEmployeeLimits || {}
     });
 
     if (result.error) {
@@ -152,7 +154,8 @@ export const updateCompany = async (req, res) => {
       officeAddress,
       subCompanyLimit,
       adminName,
-      adminPassword
+      adminPassword,
+      productEmployeeLimits
     } = req.body || {};
 
     const company = await Company.findById(companyId);
@@ -200,6 +203,9 @@ export const updateCompany = async (req, res) => {
     if (subCompanyLimit !== undefined) {
       const n = Number(subCompanyLimit);
       company.subCompanyLimit = Number.isFinite(n) ? n : null;
+    }
+    if (productEmployeeLimits !== undefined) {
+      company.productEmployeeLimits = productEmployeeLimits || {};
     }
     await company.save();
 
@@ -283,7 +289,7 @@ export const setCompanyActiveStatus = async (req, res) => {
 export const assignCompanyProducts = async (req, res) => {
   try {
     const { companyId } = req.params;
-    const { products = [] } = req.body;
+    const { products = [], productEmployeeLimits } = req.body;
 
     const company = await Company.findById(companyId);
     if (!company) {
@@ -310,6 +316,11 @@ export const assignCompanyProducts = async (req, res) => {
           isActive: true
         }))
       );
+    }
+
+    if (productEmployeeLimits !== undefined) {
+      company.productEmployeeLimits = productEmployeeLimits || {};
+      await company.save();
     }
 
     const admin = await User.findOne({ companyId: company._id, role: ROLES.COMPANY_ADMIN })

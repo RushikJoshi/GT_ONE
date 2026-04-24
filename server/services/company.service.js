@@ -121,7 +121,8 @@ export const createCompanyWithAdmin = async ({
   district,
   officeAddress,
   subCompanyLimit,
-  products = []
+  products = [],
+  productEmployeeLimits = {}
 }) => {
   const normalizedName = String(name || "").trim();
   const normalizedCompanyEmail = String(email || "").trim().toLowerCase();
@@ -193,6 +194,7 @@ export const createCompanyWithAdmin = async ({
         : Number.isFinite(Number(subCompanyLimit))
           ? Number(subCompanyLimit)
           : null,
+      productEmployeeLimits: productEmployeeLimits || {},
       hrmsEnabledModules: defaultHrms.hrmsEnabledModules,
       hrmsModules: defaultHrms.hrmsModules
     });
