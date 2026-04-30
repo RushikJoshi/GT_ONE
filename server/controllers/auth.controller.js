@@ -5,6 +5,7 @@ import {
   getRefreshCookieOptions,
   getLoginResponseData,
   isDirectAdminLogin,
+  persistPortalSessionFromToken,
   persistRefreshSession,
   buildRefreshToken,
   revokeSessionToken,
@@ -73,6 +74,9 @@ export const login = async (req, res) => {
   try {
     const { email, identifier, password } = req.body || {};
     const { redirect } = req.query;
+    const requestedApp = String(req.query?.app || req.body?.app || "").trim();
+    const requestedRedirectUri = String(req.query?.redirect_uri || req.query?.redirectUri || req.body?.redirect_uri || req.body?.redirectUri || "").trim();
+    const isSsoLogin = Boolean(requestedApp && requestedRedirectUri);
     const clientIpAddress = getClientIpAddress(req);
 
     const resolvedIdentifier = String(identifier || email || "").trim().toLowerCase();
@@ -126,8 +130,14 @@ export const login = async (req, res) => {
         token: responseData.token
       });
 
-      const refresh = buildRefreshToken({ userId: adminUser._id });
+      const refresh = await buildRefreshToken({ userId: adminUser._id });
       await persistRefreshSession({ userId: adminUser._id, jti: refresh.jti, tokenHash: refresh.tokenHash, expiresAt: refresh.expiresAt, req });
+      await persistPortalSessionFromToken({
+        token: responseData.token,
+        userId: adminUser._id,
+        req,
+        refreshJti: refresh.jti
+      });
       applyRefreshCookie({ req, res, token: refresh.token });
 
       console.log(`[SSO] Direct admin login successful: ${adminUser.email}`);
@@ -142,7 +152,12 @@ export const login = async (req, res) => {
       });
     }
 
-    const validation = await validateLogin({ identifier: resolvedIdentifier, password });
+    const validation = await validateLogin({
+      identifier: resolvedIdentifier,
+      password,
+      requestedApp,
+      isSsoLogin
+    });
     if (validation.error) {
       if (validation.error.status === 401) {
         const failureState = recordBruteForceFailure({
@@ -160,7 +175,11 @@ export const login = async (req, res) => {
         }
       }
 
-      return res.status(validation.error.status).json({ message: validation.error.message });
+      return res.status(validation.error.status).json({
+        message: validation.error.message,
+        reason: validation.error.reason || null,
+        canRequestActivation: Boolean(validation.error.canRequestActivation)
+      });
     }
 
     clearBruteForceFailures({
@@ -186,8 +205,14 @@ export const login = async (req, res) => {
         token: responseData.token
       });
 
-      const refresh = buildRefreshToken({ userId: validation.user._id });
+      const refresh = await buildRefreshToken({ userId: validation.user._id });
       await persistRefreshSession({ userId: validation.user._id, jti: refresh.jti, tokenHash: refresh.tokenHash, expiresAt: refresh.expiresAt, req });
+      await persistPortalSessionFromToken({
+        token: responseData.token,
+        userId: validation.user._id,
+        req,
+        refreshJti: refresh.jti
+      });
       applyRefreshCookie({ req, res, token: refresh.token });
 
       console.log(`[SSO] OTP bypass login successful: ${validation.user.email}`);
@@ -314,8 +339,14 @@ export const verifyOtp = async (req, res) => {
       token: responseData.token
     });
 
-    const refresh = buildRefreshToken({ userId: verification.user._id });
+    const refresh = await buildRefreshToken({ userId: verification.user._id });
     await persistRefreshSession({ userId: verification.user._id, jti: refresh.jti, tokenHash: refresh.tokenHash, expiresAt: refresh.expiresAt, req });
+    await persistPortalSessionFromToken({
+      token: responseData.token,
+      userId: verification.user._id,
+      req,
+      refreshJti: refresh.jti
+    });
     applyRefreshCookie({ req, res, token: refresh.token });
 
     console.log(`[SSO] OTP login successful: ${verification.email}`);
@@ -392,7 +423,7 @@ export const getMe = async (req, res) => {
     const sessionToken = req.cookies?.sso_token || req.cookies?.token;
     if (!sessionUser && sessionToken) {
       try {
-        sessionUser = verifyJwtWithContract({
+        sessionUser = await verifyJwtWithContract({
           token: sessionToken,
           audience: "sso"
         });
@@ -470,12 +501,12 @@ export const logout = async (req, res) => {
   const refreshToken = req.cookies?.sso_refresh;
 
   if (ssoToken) {
-    revokeSessionToken(ssoToken);
+    await revokeSessionToken(ssoToken);
   }
 
   if (refreshToken) {
     try {
-      const decoded = verifyRefreshJwt(refreshToken);
+      const decoded = await verifyRefreshJwt(refreshToken);
       if (decoded?.jti) {
         await revokeRefreshSession(decoded.jti);
       }
@@ -528,6 +559,12 @@ export const refresh = async (req, res) => {
     }
 
     applySessionCookie({ req, res, token: responseData.token });
+    await persistPortalSessionFromToken({
+      token: responseData.token,
+      userId: rotated.userId,
+      req,
+      refreshJti: rotated.refresh.jti
+    });
     return res.json({ success: true, accessToken: responseData.token, user: responseData.payloadUser });
   } catch (error) {
     return res.status(401).json({ message: "Refresh token invalid" });

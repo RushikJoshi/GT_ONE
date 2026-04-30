@@ -47,27 +47,67 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(() => readCachedUser());
   const [loading, setLoading] = useState(true);
   const [isAuthChecked, setIsAuthChecked] = useState(false);
+  const [launcherApplications, setLauncherApplications] = useState([]);
+  const [launcherLoading, setLauncherLoading] = useState(false);
 
   const setUserAndCache = useCallback((nextUser) => {
     setUser(nextUser);
     writeCachedUser(nextUser);
   }, []);
 
+  const clearLocalAuthState = useCallback(() => {
+    setUserAndCache(null);
+    setLauncherApplications([]);
+    setAccessToken(null);
+  }, [setUserAndCache]);
+
   const loadSession = async () => {
     try {
       const res = await api.get("/auth/me");
       const nextUser = res.data?.user || null;
       setUserAndCache(nextUser);
-    } catch (error) {
-      const status = error?.response?.status;
-      // Only treat explicit auth failures as logout.
-      if (status === 401 || status === 403) {
-        setUserAndCache(null);
+      if (res.data?.accessToken) {
+        setAccessToken(res.data.accessToken);
       }
+      return nextUser;
+    } catch (error) {
+      // Clear auth state on failure (including network errors and 500s)
+      // to prevent broken cached sessions when backend is unreachable.
+      clearLocalAuthState();
+      return null;
     } finally {
       setLoading(false);
     }
   };
+
+  const loadLauncherSession = useCallback(async () => {
+    try {
+      setLauncherLoading(true);
+      const res = await api.get("/sso/session");
+      const nextUser = res.data?.authenticated ? res.data?.user || null : null;
+      const nextApplications = Array.isArray(res.data?.applications) ? res.data.applications : [];
+      setLauncherApplications(nextApplications);
+      if (nextUser) {
+        setUserAndCache({
+          ...(user || {}),
+          ...nextUser
+        });
+      }
+      return {
+        authenticated: Boolean(res.data?.authenticated),
+        user: nextUser,
+        applications: nextApplications
+      };
+    } catch (error) {
+      const status = error?.response?.status;
+      if (status === 401 || status === 403) {
+        clearLocalAuthState();
+      }
+      throw error;
+    } finally {
+      setLauncherLoading(false);
+    }
+  }, [clearLocalAuthState, setUserAndCache, user]);
 
   useEffect(() => {
     // SPA rule: auth check runs ONCE.
@@ -118,14 +158,13 @@ export const AuthProvider = ({ children }) => {
     const handler = (event) => {
       const status = event?.detail?.status;
       if (status === 401 || status === 403) {
-        setUserAndCache(null);
-        setAccessToken(null);
+        clearLocalAuthState();
       }
     };
 
     window.addEventListener("auth:unauthorized", handler);
     return () => window.removeEventListener("auth:unauthorized", handler);
-  }, []);
+  }, [clearLocalAuthState]);
 
   const logout = async () => {
     try {
@@ -133,8 +172,33 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       // Keep logout resilient even if the backend is temporarily unavailable.
     } finally {
-      setUserAndCache(null);
-      setAccessToken(null);
+      clearLocalAuthState();
+    }
+  };
+
+  const logoutEverywhere = async () => {
+    let productLogoutUrls = [];
+    try {
+      const res = await api.post("/sso/global-logout");
+      productLogoutUrls = Array.isArray(res.data?.productLogoutUrls)
+        ? res.data.productLogoutUrls.filter(Boolean)
+        : [];
+    } catch (_error) {
+      // keep best-effort behavior
+    } finally {
+      clearLocalAuthState();
+    }
+
+    for (const url of productLogoutUrls) {
+      try {
+        const frame = document.createElement("iframe");
+        frame.style.display = "none";
+        frame.src = url;
+        document.body.appendChild(frame);
+        window.setTimeout(() => frame.remove(), 5000);
+      } catch {
+        // ignore per-product logout failures
+      }
     }
   };
 
@@ -143,12 +207,24 @@ export const AuthProvider = ({ children }) => {
       user,
       loading,
       isAuthChecked,
+      launcherApplications,
+      launcherLoading,
       setUser: setUserAndCache,
       reloadSession: loadSession,
+      loadLauncherSession,
       logout,
+      logoutEverywhere,
       isAuthenticated: Boolean(user)
     }),
-    [user, loading, isAuthChecked, setUserAndCache]
+    [
+      user,
+      loading,
+      isAuthChecked,
+      launcherApplications,
+      launcherLoading,
+      setUserAndCache,
+      loadLauncherSession
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

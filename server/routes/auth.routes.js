@@ -1,6 +1,12 @@
 import express from "express";
-import { getMe, login, logout, resendOtp, verifyOtp } from "../controllers/auth.controller.js";
-import { optionalProtect } from "../middleware/auth.middleware.js";
+import { getMe, login, logout, refresh, resendOtp, verifyOtp } from "../controllers/auth.controller.js";
+import {
+  activateAccount,
+  listAccounts,
+  requestActivationReset,
+  softDeleteAccount
+} from "../controllers/account.controller.js";
+import { optionalProtect, protect, superAdminOnly } from "../middleware/auth.middleware.js";
 import { createRateLimiter } from "../middleware/rateLimit.middleware.js";
 
 const router = express.Router();
@@ -31,8 +37,13 @@ const otpVerificationLimiter = createRateLimiter({
 router.post("/login", loginOtpRequestLimiter, login);
 router.post("/verify-otp", otpVerificationLimiter, verifyOtp);
 router.post("/resend-otp", otpVerificationLimiter, resendOtp);
+router.post("/request-activation-reset", requestActivationReset);
+router.post("/activate-account", activateAccount);
 router.get("/me", optionalProtect, getMe);
 router.get("/sso/me", optionalProtect, getMe);
+router.get("/accounts", protect, superAdminOnly, listAccounts);
+router.delete("/accounts/:userId", protect, superAdminOnly, softDeleteAccount);
+router.post("/refresh", refresh);
 router.post("/logout", logout);
 router.get("/logout", logout);
 

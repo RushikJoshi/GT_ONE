@@ -6,6 +6,7 @@ const SuperAdminContext = createContext(null);
 export const SuperAdminProvider = ({ children }) => {
   const [products, setProducts] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isLoaded, setIsLoaded] = useState(false);
@@ -15,12 +16,14 @@ export const SuperAdminProvider = ({ children }) => {
     
     try {
       setLoading(true);
-      const [productsRes, companiesRes] = await Promise.all([
+      const [productsRes, companiesRes, applicationsRes] = await Promise.all([
         api.get("/products"),
-        api.get("/companies")
+        api.get("/companies"),
+        api.get("/applications")
       ]);
       setProducts(productsRes.data.products || []);
       setCompanies(companiesRes.data.companies || []);
+      setApplications(applicationsRes.data.applications || []);
       setIsLoaded(true);
       setError("");
     } catch (requestError) {
@@ -33,11 +36,13 @@ export const SuperAdminProvider = ({ children }) => {
   const value = {
     products,
     companies,
+    applications,
     loading,
     error,
     isLoaded,
     loadData,
     setCompanies,
+    setApplications,
     setProducts,
     setError
   };

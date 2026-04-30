@@ -81,6 +81,11 @@
   position: relative;
 }
 
+.nav-item span {
+  text-align: center;
+  line-height: 1.15;
+}
+
 .nav-section-label {
   font-size: 0.75rem;
   font-weight: 800;
@@ -244,5 +249,122 @@
   .admin-main {
     margin-left: 0;
     padding: 20px;
+  }
+}
+
+@media (min-width: 769px) {
+  .admin-container {
+    background: #f4f7fb;
+  }
+
+  .admin-sidebar,
+  .admin-sidebar:hover,
+  .admin-sidebar:focus-within {
+    background: #0b1220;
+    box-shadow: 16px 0 48px rgba(15, 23, 42, 0.18);
+    padding: 12px;
+    width: 236px;
+  }
+
+  .sidebar-header {
+    justify-content: flex-start;
+    margin-bottom: 12px;
+    padding: 10px 8px 18px;
+  }
+
+  .sidebar-brand {
+    align-items: center;
+    flex-direction: row;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .sidebar-logo {
+    border-radius: 16px;
+    height: 46px;
+    width: 46px;
+  }
+
+  .sidebar-brand-text {
+    color: #ffffff;
+    display: block;
+    font-size: 1rem;
+    font-weight: 900;
+    letter-spacing: 0;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar-nav {
+    gap: 6px;
+    padding: 6px 0;
+  }
+
+  .nav-item {
+    align-items: center;
+    border-radius: 14px;
+    flex-direction: row;
+    font-size: 11px;
+    gap: 12px;
+    justify-content: flex-start;
+    letter-spacing: 0.04em;
+    min-height: 48px;
+    padding: 0 14px;
+  }
+
+  .nav-item span {
+    line-height: 1.2;
+    text-align: left;
+  }
+
+  .nav-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .nav-item.active {
+    background: #17356f;
+    color: #ffffff;
+  }
+
+  .nav-item.active::after {
+    border-radius: 999px;
+    height: 8px;
+    left: auto;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+  }
+
+  .icon-box svg {
+    height: 19px;
+    width: 19px;
+  }
+
+  .sidebar-footer {
+    padding: 14px 0 0;
+  }
+
+  .sidebar-actions {
+    flex-direction: row;
+    gap: 8px;
+  }
+
+  .sidebar-action {
+    border-radius: 12px;
+    flex: 1;
+    min-height: 42px;
+    padding: 0;
+  }
+
+  .admin-main,
+  .admin-sidebar:hover ~ .admin-main,
+  .admin-sidebar:focus-within ~ .admin-main {
+    background: #f4f7fb;
+    margin-left: 236px;
+    max-width: calc(100vw - 236px);
+    padding: 24px;
   }
 }

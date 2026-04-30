@@ -1,0 +1,4 @@
+[SSO] Connecting to MongoDB: mongodb+srv://ravaldhruv85_db_user:****@cluster0.rae6dld.mongodb.net/?appName=Cluster0
+[SSO] MongoDB Connected (db=gitakshmi-one)
+[SEED] SUPER_ADMIN already exists: admin@example.com
+[SSO] System running on port 5004

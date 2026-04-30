@@ -4,11 +4,16 @@ import { useNavigate } from 'react-router-dom';
 import './AdminLayout.css';
 
 const AdminLayout = ({ children, activeTab, setActiveTab }) => {
-  const { logout } = useAuth();
+  const { logout, logoutEverywhere } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
     await logout();
+    navigate('/login');
+  };
+
+  const handleLogoutEverywhere = async () => {
+    await logoutEverywhere();
     navigate('/login');
   };
 
@@ -20,6 +25,36 @@ const AdminLayout = ({ children, activeTab, setActiveTab }) => {
           strokeLinejoin="round"
           strokeWidth={1.8}
           d="M4.75 4.75h5.5v5.5h-5.5v-5.5Zm9 0h5.5v5.5h-5.5v-5.5Zm-9 9h5.5v5.5h-5.5v-5.5Zm9 0h5.5v5.5h-5.5v-5.5Z"
+        />
+      </svg>
+    )},
+    { id: 'applications', label: 'APPLICATIONS', icon: (
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M6.5 6.75h11a1.75 1.75 0 0 1 1.75 1.75v7a1.75 1.75 0 0 1-1.75 1.75h-11A1.75 1.75 0 0 1 4.75 15.5v-7A1.75 1.75 0 0 1 6.5 6.75Zm2 12.5h7"
+        />
+      </svg>
+    )},
+    { id: 'product-config', label: 'PRODUCT CONFIG', icon: (
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M12 3.75 4.75 7.5v9L12 20.25l7.25-3.75v-9L12 3.75Zm0 0v16.5M7.75 9.25l8.5 4.5M16.25 9.25l-8.5 4.5"
+        />
+      </svg>
+    )},
+    { id: 'accounts', label: 'ACCOUNTS', icon: (
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M16 19a4 4 0 0 0-8 0M12 12a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8 7a4 4 0 0 0-3-3.87M17.5 12a3 3 0 1 0 0-6M4 19a4 4 0 0 1 3-3.87M6.5 12a3 3 0 1 1 0-6"
         />
       </svg>
     )},
@@ -92,6 +127,13 @@ const AdminLayout = ({ children, activeTab, setActiveTab }) => {
             <button type="button" className="sidebar-action" onClick={handleLogout} title="Logout">
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </button>
+
+            <button type="button" className="sidebar-action" onClick={handleLogoutEverywhere} title="Sign out everywhere">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v3m0 12v3m9-9h-3M6 12H3m15.364 6.364-2.121-2.121M7.757 7.757 5.636 5.636m12.728 0-2.121 2.121M7.757 16.243l-2.121 2.121" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15.5 12a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Z" />
               </svg>
             </button>
           </div>

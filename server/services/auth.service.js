@@ -1,5 +1,4 @@
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import User from "../models/User.js";
 import Company from "../models/Company.js";
@@ -8,9 +7,25 @@ import Product from "../models/Product.js";
 import { PRODUCT_URLS, getHrmsBaseUrl } from "../constants/products.js";
 import { ROLES } from "../constants/roles.js";
 import { normalizeHrmsModuleSettings, toSparseHrmsEnabledModules } from "../constants/hrmsModules.js";
+import {
+  normalizeProductModuleSettings,
+  toSparseProductEnabledModules
+} from "../constants/productModules.js";
 import { syncCompanyToHrms } from "./hrmsProvisioning.service.js";
 import RefreshToken from "../models/RefreshToken.js";
+import SsoAuthorizationCode from "../models/SsoAuthorizationCode.js";
+import SsoSession from "../models/SsoSession.js";
 import crypto from "crypto";
+import {
+  findApplicationByIdentifier,
+  hasCompanyAccessToApplication
+} from "./applicationRegistry.service.js";
+import {
+  decodePlatformJwt,
+  signPlatformJwt,
+  verifyPlatformJwt
+} from "./signingKey.service.js";
+import { recordAuditEvent } from "./audit.service.js";
 
 const isLocalHost = (host) => {
   const normalized = String(host || "").toLowerCase();
@@ -28,10 +43,12 @@ const resolveCookieDomain = (host) => {
 };
 
 const resolveCookieSecure = (host) => {
-  // If it's localhost, we can't use Secure=true unless using https
   if (isLocalHost(host)) return false;
-  // In production, always use Secure=true
-  return process.env.SSO_COOKIE_SECURE === "true" || true;
+  const configured = process.env.SSO_COOKIE_SECURE;
+  if (configured !== undefined) {
+    return ["true", "1", "yes"].includes(String(configured).trim().toLowerCase());
+  }
+  return true;
 };
 
 const resolveSameSite = (host) => {
@@ -42,13 +59,11 @@ const resolveSameSite = (host) => {
 };
 
 export const getCookieOptions = (host) => {
-  const isLocal = isLocalHost(host);
   return {
     httpOnly: true,
-    sameSite: "lax",
-    secure: !isLocal, // false on localhost, true on production
-    domain: isLocal ? undefined : (process.env.SSO_COOKIE_DOMAIN || ".gitakshmi.com"),
-
+    sameSite: resolveSameSite(host),
+    secure: resolveCookieSecure(host),
+    domain: resolveCookieDomain(host),
     path: "/"
   };
 };
@@ -59,13 +74,7 @@ export const COOKIE_OPTIONS = getCookieOptions();
 
 const AUTH_CODE_TTL_SECONDS = Number(process.env.SSO_AUTH_CODE_TTL_SECONDS || 120);
 const APP_TOKEN_TTL_SECONDS = Number(process.env.SSO_APP_TOKEN_TTL_SECONDS || 900);
-const ISSUER = process.env.JWT_ISSUER || "gitakshmi-sso";
-const JWT_ALGORITHMS = (process.env.JWT_ALLOWED_ALGS || "HS256")
-  .split(",")
-  .map((item) => item.trim())
-  .filter(Boolean);
-const USED_AUTH_CODE_JTIS = new Map();
-const REVOKED_SESSION_JTIS = new Map();
+const ISSUER = process.env.JWT_ISSUER || "gtone-sso";
 const APP_ALIASES = {
   hrms: "hrms",
   tms: "tms",
@@ -142,7 +151,7 @@ const buildAppUrlLikeOrigin = (baseUrl, requestOrigin) => {
 };
 
 const getSsoDashboardUrl = (requestOrigin) => {
-  const ssoLoginUrl = process.env.SSO_LOGIN_URL || "https://devgaccess.gitakshmi.com/login?redirect=hrms";
+  const ssoLoginUrl = process.env.SSO_LOGIN_URL || "http://localhost:5174/login?redirect=hrms";
   const url = new URL(buildAppUrlLikeOrigin(ssoLoginUrl, requestOrigin));
   url.pathname = "/dashboard";
   url.search = "";
@@ -222,6 +231,20 @@ const findTenantForCompany = async ({ company, user }) => {
   );
 };
 
+const findSingleActiveTenant = async () => {
+  const collection = getTenantCollection();
+  if (!collection) return null;
+
+  const tenants = await collection
+    .find({ status: "active" })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(2)
+    .project({ _id: 1, code: 1, companyCode: 1 })
+    .toArray();
+
+  return tenants.length === 1 ? tenants[0] : null;
+};
+
 const backfillCompanyTenantMapping = async ({ companyId, tenantId }) => {
   if (!companyId || !tenantId) return;
   await Company.updateOne(
@@ -298,7 +321,33 @@ const resolveCompanyForToken = async (user) => {
 };
 
 const resolveHrmsTenantContext = async ({ company, user, products }) => {
+  const normalizedRole = String(user?.role || "").trim().toLowerCase();
+  const isAdmin =
+    isSuperRole(normalizedRole) ||
+    normalizedRole === "company_admin" ||
+    normalizedRole === "admin";
+
   if (!company) {
+    if (isAdmin) {
+      const bootstrapTenant = await findSingleActiveTenant();
+      if (bootstrapTenant?._id) {
+        const tenantId = String(bootstrapTenant._id);
+        return {
+          tenantId,
+          companyId: tenantId,
+          companyCode: sanitizeCompanyCode(bootstrapTenant.code || bootstrapTenant.companyCode),
+          source: "single_active_tenant_admin_bootstrap"
+        };
+      }
+
+      return {
+        tenantId: "central",
+        companyId: "central",
+        companyCode: "SUPER",
+        source: "admin_fallback"
+      };
+    }
+
     return { tenantId: null, companyId: null, companyCode: null, reason: "company_not_found" };
   }
 
@@ -438,7 +487,7 @@ const isValidAbsoluteUrl = (value) => {
 
 const DEFAULT_SUPER_ADMIN = {
   name: "GT ONE Super Admin",
-  email: "admin@gitakshmi.com",
+  email: "admin@example.com",
   password: "admin@2026"
 };
 
@@ -454,14 +503,11 @@ const OTP_BYPASS_EMAILS = new Set(
     .filter(Boolean)
 );
 
-const getJwtSecret = () => {
-  if (!process.env.JWT_SECRET) {
-    throw new Error("JWT_SECRET is not configured");
-  }
-  return process.env.JWT_SECRET;
-};
-
 const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
+const normalizeRequestedApp = (value) => String(value || "").trim().toLowerCase();
+const IMPORTED_SSO_ACCOUNT_STATUSES = new Set(["pending_activation", "active"]);
+const ACCESS_TOKEN_TTL = String(process.env.ACCESS_TOKEN_TTL || "15m");
+const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14);
 
 export const isDirectAdminLogin = ({ email, password }) =>
   normalizeEmail(email) === DIRECT_ADMIN_CREDENTIALS.email &&
@@ -481,6 +527,9 @@ export const resolveDirectAdminUser = async () => {
       name: DEFAULT_SUPER_ADMIN.name,
       email: DIRECT_ADMIN_CREDENTIALS.email,
       password: hashedPassword,
+      authSource: "local",
+      accountStatus: "active",
+      allowDirectLogin: true,
       role: ROLES.SUPER_ADMIN,
       tenantId: null
     });
@@ -489,8 +538,12 @@ export const resolveDirectAdminUser = async () => {
 
   if (adminUser.role !== ROLES.SUPER_ADMIN) {
     adminUser.role = ROLES.SUPER_ADMIN;
-    await adminUser.save();
   }
+  adminUser.authSource = "local";
+  adminUser.accountStatus = "active";
+  adminUser.allowDirectLogin = true;
+  adminUser.importedFromAppKey = null;
+  await adminUser.save();
 
   // Keep local/dev direct-admin password in sync so login is predictable.
   // In production you can control via ADMIN_BYPASS_PASSWORD / seed scripts instead.
@@ -528,22 +581,165 @@ const validateTokenContract = (decodedToken) => {
   return { valid: true };
 };
 
-const cleanupUsedAuthCodes = () => {
-  const now = Date.now();
-  for (const [jti, expiresAt] of USED_AUTH_CODE_JTIS.entries()) {
-    if (expiresAt <= now) {
-      USED_AUTH_CODE_JTIS.delete(jti);
-    }
-  }
+const decodeTokenMeta = (token) => {
+  const decoded = decodePlatformJwt(token);
+  return decoded && typeof decoded === "object" ? decoded : null;
 };
 
-const cleanupRevokedSessions = () => {
-  const now = Date.now();
-  for (const [jti, expiresAt] of REVOKED_SESSION_JTIS.entries()) {
-    if (expiresAt <= now) {
-      REVOKED_SESSION_JTIS.delete(jti);
-    }
+const getImportedUserAppKey = (user) =>
+  String(user?.importedFromAppKey || user?.product || "")
+    .trim()
+    .toLowerCase();
+
+const persistPortalSession = async ({ token, userId, req, refreshJti = null }) => {
+  const decoded = decodeTokenMeta(token);
+  if (!decoded?.jti || !decoded?.exp) {
+    throw new Error("invalid_access_token_metadata");
   }
+
+  await SsoSession.findOneAndUpdate(
+    { jti: decoded.jti },
+    {
+      userId,
+      jti: decoded.jti,
+      scope: "portal",
+      status: "active",
+      refreshJti,
+      createdByIp: String(req?.ip || req?.headers?.["x-forwarded-for"] || "").trim() || null,
+      userAgent: String(req?.headers?.["user-agent"] || "").trim() || null,
+      lastSeenAt: new Date(),
+      revokedAt: null,
+      revokedReason: null,
+      expiresAt: new Date(decoded.exp * 1000)
+    },
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true
+    }
+  );
+
+  await User.updateOne(
+    { _id: userId },
+    { $set: { lastSuccessfulLoginAt: new Date() } }
+  );
+
+  return decoded;
+};
+
+const touchPortalSession = async (jti) => {
+  if (!jti) return;
+  await SsoSession.updateOne(
+    { jti, status: "active" },
+    { $set: { lastSeenAt: new Date() } }
+  );
+};
+
+const revokePortalSessionByJti = async (jti, revokedReason = "logout") => {
+  if (!jti) return;
+  await SsoSession.updateOne(
+    { jti, status: "active" },
+    {
+      $set: {
+        status: "revoked",
+        revokedAt: new Date(),
+        revokedReason
+      }
+    }
+  );
+};
+
+export const revokeAllUserPortalSessions = async (userId, revokedReason = "global_logout") => {
+  if (!userId) return;
+  await SsoSession.updateMany(
+    { userId, status: "active" },
+    {
+      $set: {
+        status: "revoked",
+        revokedAt: new Date(),
+        revokedReason
+      }
+    }
+  );
+  await RefreshToken.updateMany(
+    { userId, revokedAt: null },
+    { $set: { revokedAt: new Date() } }
+  );
+};
+
+const getAccountStatusMessage = (user) => {
+  const status = String(user?.accountStatus || "active").trim().toLowerCase();
+  if (status === "pending_activation") {
+    return "Activate your GT_ONE account before signing in directly.";
+  }
+  if (status === "suspended") {
+    return "Your GT_ONE account is suspended. Contact your administrator.";
+  }
+  if (status === "disabled") {
+    return "Your GT_ONE account is disabled. Contact your administrator.";
+  }
+  return "This account is not allowed to sign in.";
+};
+
+const validateImportedUserLogin = ({ user, requestedApp, isSsoLogin }) => {
+  const accountStatus = String(user?.accountStatus || "active").trim().toLowerCase();
+  if (!IMPORTED_SSO_ACCOUNT_STATUSES.has(accountStatus)) {
+    return {
+      status: 403,
+      reason: "account_inactive",
+      message: getAccountStatusMessage(user)
+    };
+  }
+
+  if (!isSsoLogin) {
+    if (accountStatus === "pending_activation") {
+      return {
+        status: 403,
+        reason: "pending_activation",
+        canRequestActivation: true,
+        message: "Activate your GT_ONE account to use the GT_ONE portal directly."
+      };
+    }
+
+    return {
+      status: 403,
+      reason: "sso_only_account",
+      message: `This account must sign in through ${String(user?.importedFromAppKey || user?.product || "its assigned product").trim().toUpperCase()}.`
+    };
+  }
+
+  const importedAppKey = getImportedUserAppKey(user);
+  if (!importedAppKey || requestedApp !== importedAppKey) {
+    return {
+      status: 403,
+      reason: "invalid_sso_origin",
+      message: `This account must sign in through ${String(user?.importedFromAppKey || user?.product || "its assigned product").trim().toUpperCase()}.`
+    };
+  }
+
+  return null;
+};
+
+const validateAccountStatusForLogin = ({ user, requestedApp, isSsoLogin }) => {
+  if (!user) {
+    return { status: 401, reason: "invalid_user", message: "Invalid credentials" };
+  }
+
+  const normalizedStatus = String(user.accountStatus || "active").trim().toLowerCase();
+
+  if (user.authSource === "imported") {
+    return validateImportedUserLogin({ user, requestedApp, isSsoLogin });
+  }
+
+  if (normalizedStatus === "active") {
+    return null;
+  }
+
+  return {
+    status: 403,
+    reason: normalizedStatus === "pending_activation" ? "pending_activation" : "account_inactive",
+    message: getAccountStatusMessage(user)
+  };
 };
 
 const getRedirectAllowlist = (canonicalApp) => {
@@ -602,7 +798,7 @@ export const validateRedirectUriForApp = ({ app, redirectUri }) => {
   return { valid: true, app: canonicalApp };
 };
 
-export const buildToken = ({
+export const buildToken = async ({
   user,
   products,
   tenantId,
@@ -633,14 +829,15 @@ export const buildToken = ({
     ...extraClaims
   };
 
-  const token = jwt.sign(payload, getJwtSecret(), {
-    algorithm: JWT_ALGORITHMS[0] || "HS256",
+  const token = await signPlatformJwt({
+    payload,
     expiresIn,
-    issuer: ISSUER,
     audience: asArrayAudience(audience),
-    jwtid: jti
+    jwtid: jti,
+    subject: String(user._id),
+    type: asArrayAudience(audience).includes("sso") ? "access" : "app_access"
   });
-  const decoded = jwt.decode(token);
+  const decoded = decodeTokenMeta(token);
   logAuth("jwt_generated", {
     userId: payload.id,
     email: payload.email,
@@ -897,6 +1094,20 @@ const allowEmployeeOtpFallback = () => {
     return String(process.env.ALLOW_HRMS_EMPLOYEE_OTP_FALLBACK || "").trim().toLowerCase() === "true";
   }
   return String(process.env.ALLOW_HRMS_EMPLOYEE_OTP_FALLBACK || "true").trim().toLowerCase() !== "false";
+};
+
+const allowLegacyHrmsPasswordFallback = ({ requestedApp, isSsoLogin = false } = {}) => {
+  const flag = String(process.env.ALLOW_LEGACY_HRMS_PASSWORD_FALLBACK || "false").trim().toLowerCase();
+  if (!["1", "true", "yes"].includes(flag)) {
+    return false;
+  }
+
+  const normalizedRequestedApp = String(requestedApp || "").trim().toLowerCase();
+  if (!isSsoLogin) {
+    return false;
+  }
+
+  return normalizedRequestedApp === "hrms";
 };
 
 const verifyEmployeePassword = async (plain, stored) => {
@@ -1422,15 +1633,21 @@ const findHrmsEmployeeAcrossTenants = async ({ client, normalizedEmail, normaliz
   return { user: null, emailFound };
 };
 
-export const validateLogin = async ({ identifier, password }) => {
+export const validateLogin = async ({ identifier, password, requestedApp, isSsoLogin = false }) => {
   const normalizedEmail = String(identifier || "").trim().toLowerCase();
   const normalizedPassword = String(password || "");
+  const normalizedRequestedApp = normalizeRequestedApp(requestedApp);
+  const legacyHrmsFallbackEnabled = allowLegacyHrmsPasswordFallback({
+    requestedApp: normalizedRequestedApp,
+    isSsoLogin
+  });
 
   if (!normalizedEmail || !normalizedPassword) {
     return { error: { status: 400, message: "Email and password are required" } };
   }
 
   let emailFound = false;
+  let blockedMatchedUser = null;
 
   // 1. Check SSO User collection first (admin/HR users).
   // Duplicate emails are allowed, so resolve by matching the password.
@@ -1440,6 +1657,16 @@ export const validateLogin = async ({ identifier, password }) => {
     for (const ssoUser of ssoUsers) {
       const isPasswordValid = await bcrypt.compare(normalizedPassword, ssoUser.password);
       if (isPasswordValid) {
+        const accountValidation = validateAccountStatusForLogin({
+          user: ssoUser,
+          requestedApp: normalizedRequestedApp,
+          isSsoLogin
+        });
+        if (accountValidation) {
+          blockedMatchedUser = { user: ssoUser, accountValidation };
+          continue;
+        }
+
         logAuth("credentials_validated", {
           email: normalizedEmail,
           role: ssoUser.role,
@@ -1448,11 +1675,31 @@ export const validateLogin = async ({ identifier, password }) => {
         return { user: ssoUser };
       }
     }
-    // If password failed for all matched users, fall through to tenant database checks.
+
+    if (blockedMatchedUser) {
+      return {
+        error: {
+          status: blockedMatchedUser.accountValidation.status || 403,
+          reason: blockedMatchedUser.accountValidation.reason || null,
+          canRequestActivation: blockedMatchedUser.accountValidation.reason === "pending_activation",
+          message: blockedMatchedUser.accountValidation.message
+        }
+      };
+    }
+
+    if (!legacyHrmsFallbackEnabled) {
+      return { error: { status: 401, message: "Invalid credentials" } };
+    }
+
+    // If legacy HRMS fallback is enabled, allow tenant database checks after GT_ONE password mismatch.
     logAuth("sso_password_mismatch_trying_fallback", {
       email: normalizedEmail,
       matchedUsers: ssoUsers.length
     });
+  }
+
+  if (!legacyHrmsFallbackEnabled) {
+    return { error: { status: 401, message: "Invalid credentials" } };
   }
 
   // 2. Fallback: Check HRMS Tenant Databases (Multi-tenant isolation)
@@ -1479,9 +1726,9 @@ export const validateLogin = async ({ identifier, password }) => {
     }
 
     if (emailFound) {
-      return { error: { status: 401, message: "Invalid password" } };
+      return { error: { status: 401, message: "Invalid credentials" } };
     }
-    return { error: { status: 401, message: "Invalid email" } };
+    return { error: { status: 401, message: "Invalid credentials" } };
   } catch (empErr) {
     console.error(`[SSO] CRITICAL_AUTH_FAILURE: ${empErr.message}`);
     if (empErr.stack) console.error(empErr.stack);
@@ -1605,7 +1852,7 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
 
     let token;
     try {
-      token = buildToken({
+      token = await buildToken({
         user: latestUser,
         products: normalizedProducts,
         tenantId,
@@ -1716,18 +1963,25 @@ export const getLoginResponseData = async ({ user, redirect, requestOrigin }) =>
   }
 };
 
-export const verifyJwtWithContract = ({ token, audience }) => {
-  cleanupRevokedSessions();
-  const decoded = jwt.verify(token, getJwtSecret(), {
-    algorithms: JWT_ALGORITHMS,
-    issuer: ISSUER,
+export const verifyJwtWithContract = async ({ token, audience }) => {
+  const decoded = await verifyPlatformJwt({
+    token,
     audience
   });
 
-  if (decoded?.jti && REVOKED_SESSION_JTIS.has(decoded.jti)) {
-    const error = new Error("session_revoked");
-    error.code = "session_revoked";
-    throw error;
+  if (decoded?.typ === "access" && decoded?.jti) {
+    const session = await SsoSession.findOne({ jti: decoded.jti }).lean();
+    if (!session || session.status !== "active") {
+      const error = new Error("session_revoked");
+      error.code = "session_revoked";
+      throw error;
+    }
+    if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
+      const error = new Error("session_expired");
+      error.code = "session_expired";
+      throw error;
+    }
+    await touchPortalSession(decoded.jti);
   }
 
   const contractValidation = validateTokenContract(decoded);
@@ -1740,26 +1994,23 @@ export const verifyJwtWithContract = ({ token, audience }) => {
   return decoded;
 };
 
-export const revokeSessionToken = (token) => {
+export const persistPortalSessionFromToken = async ({ token, userId, req, refreshJti = null }) =>
+  persistPortalSession({ token, userId, req, refreshJti });
+
+export const revokeSessionToken = async (token, revokedReason = "logout") => {
   if (!token) return;
-  cleanupRevokedSessions();
   try {
-    const decoded = jwt.verify(token, getJwtSecret(), {
-      algorithms: JWT_ALGORITHMS,
-      issuer: ISSUER,
+    const decoded = await verifyPlatformJwt({
+      token,
       audience: "sso",
       ignoreExpiration: true
     });
     if (!decoded?.jti) return;
-    const expiresAtMs = decoded.exp ? decoded.exp * 1000 : Date.now() + 24 * 60 * 60 * 1000;
-    REVOKED_SESSION_JTIS.set(decoded.jti, expiresAtMs);
+    await revokePortalSessionByJti(decoded.jti, revokedReason);
   } catch (_error) {
     // Best effort revocation for logout; ignore malformed tokens.
   }
 };
-
-const ACCESS_TOKEN_TTL = String(process.env.ACCESS_TOKEN_TTL || "15m");
-const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 14);
 
 export const getRefreshCookieOptions = (host) => {
   const base = getCookieOptions(host);
@@ -1772,20 +2023,17 @@ export const getRefreshCookieOptions = (host) => {
   };
 };
 
-export const buildRefreshToken = ({ userId, sessionJti, expiresInDays = REFRESH_TOKEN_TTL_DAYS }) => {
+export const buildRefreshToken = async ({ userId, sessionJti, expiresInDays = REFRESH_TOKEN_TTL_DAYS }) => {
   const jti = sessionJti || crypto.randomUUID();
-  const token = jwt.sign(
-    { sub: String(userId), typ: "refresh" },
-    getJwtSecret(),
-    {
-      algorithm: JWT_ALGORITHMS[0] || "HS256",
-      expiresIn: `${expiresInDays}d`,
-      issuer: ISSUER,
-      audience: ["sso-refresh"],
-      jwtid: jti
-    }
-  );
-  const decoded = jwt.decode(token);
+  const token = await signPlatformJwt({
+    payload: { sub: String(userId) },
+    audience: ["sso-refresh"],
+    expiresIn: `${expiresInDays}d`,
+    jwtid: jti,
+    subject: String(userId),
+    type: "refresh"
+  });
+  const decoded = decodeTokenMeta(token);
   const expiresAt = decoded?.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + expiresInDays * 86400000);
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
   return { token, jti, tokenHash, expiresAt };
@@ -1808,10 +2056,9 @@ export const revokeRefreshSession = async (jti) => {
   await RefreshToken.updateOne({ jti }, { $set: { revokedAt: new Date() } });
 };
 
-export const verifyRefreshJwt = (token) => {
-  const decoded = jwt.verify(token, getJwtSecret(), {
-    algorithms: JWT_ALGORITHMS,
-    issuer: ISSUER,
+export const verifyRefreshJwt = async (token) => {
+  const decoded = await verifyPlatformJwt({
+    token,
     audience: "sso-refresh"
   });
   if (decoded?.typ !== "refresh") {
@@ -1823,7 +2070,7 @@ export const verifyRefreshJwt = (token) => {
 };
 
 export const rotateRefreshToken = async ({ refreshToken }) => {
-  const decoded = verifyRefreshJwt(refreshToken);
+  const decoded = await verifyRefreshJwt(refreshToken);
   const jti = decoded.jti;
   const session = await RefreshToken.findOne({ jti }).lean();
   if (!session || session.revokedAt) {
@@ -1839,26 +2086,81 @@ export const rotateRefreshToken = async ({ refreshToken }) => {
 
   // revoke old session and create new one
   await revokeRefreshSession(jti);
-  const next = buildRefreshToken({ userId: decoded.sub });
+  const next = await buildRefreshToken({ userId: decoded.sub });
   await persistRefreshSession({ userId: decoded.sub, jti: next.jti, tokenHash: next.tokenHash, expiresAt: next.expiresAt, req: null });
   return { userId: decoded.sub, refresh: next };
 };
 
 export const resolveAppContextForUser = async ({ user, app }) => {
-  const normalizedAppToken = normalizeAppName(app);
-  if (!normalizedAppToken) {
-    return { error: { status: 400, reason: "invalid_app", message: "app must be hrms or tms" } };
+  const application = await findApplicationByIdentifier(app);
+  if (!application) {
+    return { error: { status: 400, reason: "invalid_app", message: "Unknown application key" } };
   }
-  const normalizedApp = normalizedAppToken.toUpperCase();
+
+  if (application.status !== "active") {
+    return { error: { status: 403, reason: "application_inactive", message: "Application is inactive" } };
+  }
+
+  const normalizedApp = String(application.key || "").trim().toUpperCase();
   const company = await resolveCompanyForToken(user);
   const products = await resolveUserProducts(user);
   const normalizedProducts = Array.isArray(products)
     ? [...new Set(products.map((item) => String(item).toUpperCase()).filter(Boolean))]
     : [];
+  const requestedProductName = String(
+    application.legacyProductName || application.name || application.key || ""
+  )
+    .trim()
+    .toUpperCase();
+  const isHrmsClassApp = normalizedApp === "HRMS" || requestedProductName === "HRMS";
+  const requestedProduct = requestedProductName
+    ? await Product.findOne({ name: requestedProductName }).collation({
+      locale: "en",
+      strength: 2
+    }).lean()
+    : null;
+  const companyProductModuleLink = company?._id && requestedProduct?._id
+    ? await CompanyProduct.findOne({
+      companyId: company._id,
+      productId: requestedProduct._id,
+      isActive: true
+    }).lean()
+    : null;
+  const productModuleSettings = normalizeProductModuleSettings(
+    requestedProductName,
+    companyProductModuleLink?.enabledModules || (isHrmsClassApp ? company?.hrmsEnabledModules : undefined),
+    companyProductModuleLink?.modules || (isHrmsClassApp ? company?.hrmsModules : undefined)
+  );
+  const productModuleClaims = productModuleSettings.moduleKeys.length
+    ? {
+      enabledModules: toSparseProductEnabledModules(
+        requestedProductName,
+        productModuleSettings.enabledModules
+      ),
+      modules: productModuleSettings.modules
+    }
+    : {};
+  const hasCompanyAssignment = company?._id
+    ? await hasCompanyAccessToApplication({
+      companyId: company._id,
+      applicationId: application._id
+    })
+    : false;
   const hasRequestedProduct =
-    normalizedApp === "HRMS"
-      ? normalizedProducts.includes("HRMS")
-      : normalizedProducts.some((item) => ["TMS", "PMS", "CRM"].includes(item));
+    isSuperRole(user.role) ||
+    hasCompanyAssignment ||
+    normalizedProducts.includes(requestedProductName);
+
+  const commonClaims = {
+    sub: String(user._id),
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    products: normalizedProducts,
+    appKey: application.key,
+    applicationId: String(application._id),
+    audience: application.audience || application.key
+  };
 
   if (!hasRequestedProduct) {
     return {
@@ -1871,7 +2173,7 @@ export const resolveAppContextForUser = async ({ user, app }) => {
     };
   }
 
-  if (normalizedApp === "HRMS") {
+  if (isHrmsClassApp) {
     const tenantContext = await resolveHrmsTenantContext({
       company,
       user,
@@ -1891,136 +2193,172 @@ export const resolveAppContextForUser = async ({ user, app }) => {
 
     return {
       app: "HRMS",
-      commonClaims: {
-        sub: String(user._id),
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        products: normalizedProducts
-      },
+      application,
+      commonClaims,
       appClaims: {
         tenantId: String(tenantContext.tenantId),
-        companyCode: String(tenantContext.companyCode)
+        companyId: String(tenantContext.companyId || user.companyId || "").trim() || null,
+        companyCode: String(tenantContext.companyCode || "").trim() || null,
+        ...productModuleClaims
       }
     };
   }
 
-  if (normalizedApp === "TMS") {
-    const workspaceId =
-      String(company?.hrmsTenantId || company?._id || user.companyId || "")
-        .trim() || null;
-    const orgId = String(company?._id || user.companyId || "").trim() || null;
-    const companyId = String(user.companyId || company?._id || "").trim() || null;
+  const workspaceId =
+    String(company?.hrmsTenantId || company?.tenantId || company?.organizationId || company?._id || user.companyId || "")
+      .trim() || null;
+  const orgId = String(company?.organizationId || company?._id || user.companyId || "").trim() || null;
+  const companyId = String(user.companyId || company?._id || "").trim() || null;
+  const companyCode = String(company?.code || company?.companyCode || "").trim() || null;
+  const allowGlobalSuperContext =
+    isSuperRole(user.role) &&
+    normalizedApp !== "HRMS" &&
+    !workspaceId &&
+    !orgId &&
+    !companyId;
 
-    if (!workspaceId || (!orgId && !companyId)) {
-      return {
-        error: {
-          status: 403,
-          reason: "context_not_found",
-          message: "TMS context not found",
-          detail: "missing_claims"
-        }
-      };
-    }
-
+  if (!workspaceId && !orgId && !companyId && !allowGlobalSuperContext) {
     return {
-      app: "TMS",
-      commonClaims: {
-        sub: String(user._id),
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        products: normalizedProducts
-      },
-      appClaims: {
-        workspaceId,
-        orgId,
-        companyId
+      error: {
+        status: 403,
+        reason: "context_not_found",
+        message: `${normalizedApp} context not found`,
+        detail: "missing_claims"
       }
     };
   }
 
-  return { error: { status: 400, reason: "invalid_audience", message: "Unsupported app" } };
+  return {
+    app: normalizedApp,
+    application,
+    commonClaims,
+    appClaims: {
+      workspaceId: allowGlobalSuperContext ? null : workspaceId,
+      orgId: allowGlobalSuperContext ? null : orgId,
+      companyId: allowGlobalSuperContext ? null : companyId,
+      companyCode,
+      ...productModuleClaims
+    }
+  };
 };
 
-export const buildAppTokenFromContext = ({ user, appContext }) => {
-  const audience = String(appContext.app || "").toLowerCase();
+export const buildAppTokenFromContext = async ({ user, appContext }) => {
+  const audience = String(appContext.application?.audience || appContext.app || "").toLowerCase();
   return buildToken({
     user,
     products: appContext.commonClaims.products,
     tenantId: appContext.appClaims.tenantId || null,
     companyCode: appContext.appClaims.companyCode || null,
-    companyId: appContext.appClaims.orgId || user.companyId || null,
+    companyId: appContext.appClaims.companyId || appContext.appClaims.orgId || user.companyId || null,
     audience: [audience],
     expiresIn: `${APP_TOKEN_TTL_SECONDS}s`,
-    extraClaims: appContext.appClaims
+    extraClaims: {
+      product: appContext.application?.legacyProductName || appContext.application?.name || null,
+      appKey: appContext.application?.key || null,
+      applicationId: appContext.application?._id ? String(appContext.application._id) : null,
+      ...appContext.appClaims
+    }
   });
 };
 
-export const buildAuthorizationCode = ({ user, appContext, redirectUri }) => {
-  cleanupUsedAuthCodes();
+export const buildAuthorizationCode = async ({ user, appContext, redirectUri }) => {
+  const claimsSnapshot = {
+    sub: String(user._id),
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    products: appContext.commonClaims.products,
+    app: String(appContext.app).toLowerCase(),
+    appKey: appContext.application?.key || String(appContext.app).toLowerCase(),
+    applicationId: appContext.application?._id ? String(appContext.application._id) : null,
+    redirectUri,
+    ...appContext.appClaims
+  };
 
-  const now = Math.floor(Date.now() / 1000);
-  const jti = `${String(user._id)}-${now}-${Math.random().toString(36).slice(2, 10)}`;
+  const code = crypto.randomBytes(48).toString("base64url");
+  const codeHash = crypto.createHash("sha256").update(code).digest("hex");
+  const expiresAt = new Date(Date.now() + AUTH_CODE_TTL_SECONDS * 1000);
 
-  const code = jwt.sign(
-    {
-      sub: String(user._id),
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      products: appContext.commonClaims.products,
-      app: String(appContext.app).toLowerCase(),
-      redirectUri,
-      ...appContext.appClaims
-    },
-    getJwtSecret(),
-    {
-      algorithm: JWT_ALGORITHMS[0] || "HS256",
-      expiresIn: `${AUTH_CODE_TTL_SECONDS}s`,
-      issuer: ISSUER,
-      audience: ["sso-exchange"],
-      jwtid: jti
-    }
-  );
+  await SsoAuthorizationCode.create({
+    codeHash,
+    jti: crypto.randomUUID(),
+    applicationId: appContext.application?._id,
+    appKey: String(appContext.application?.key || appContext.app || "").trim().toLowerCase(),
+    userId: user._id,
+    redirectUri,
+    claimsSnapshot,
+    expiresAt
+  });
 
   return code;
 };
 
-export const exchangeAuthorizationCode = ({ code, app, redirectUri }) => {
-  cleanupUsedAuthCodes();
+export const exchangeAuthorizationCode = async ({ code, app, redirectUri }) => {
+  const normalizedApp = String(app || "").trim().toLowerCase();
+  const normalizedRedirectUri = String(redirectUri || "").trim();
+  const codeHash = crypto.createHash("sha256").update(String(code || "")).digest("hex");
+  const authCodeRecord = await SsoAuthorizationCode.findOne({ codeHash }).lean();
 
-  const decoded = verifyJwtWithContract({
-    token: code,
-    audience: "sso-exchange"
-  });
-
-  if (decoded.app !== String(app || "").toLowerCase()) {
-    const error = new Error("invalid_audience");
-    error.code = "invalid_audience";
+  if (!authCodeRecord) {
+    const error = new Error("invalid_code");
+    error.code = "invalid_code";
     throw error;
   }
 
-  if (decoded.redirectUri !== redirectUri) {
-    const error = new Error("invalid_redirect_uri");
-    error.code = "invalid_redirect_uri";
-    throw error;
-  }
-
-  if (!decoded.jti) {
-    const error = new Error("missing_claims");
-    error.code = "missing_claims";
-    throw error;
-  }
-
-  if (USED_AUTH_CODE_JTIS.has(decoded.jti)) {
+  if (authCodeRecord.consumedAt) {
     const error = new Error("code_already_used");
     error.code = "code_already_used";
     throw error;
   }
 
-  USED_AUTH_CODE_JTIS.set(decoded.jti, decoded.exp * 1000);
-  return decoded;
+  if (!authCodeRecord.expiresAt || new Date(authCodeRecord.expiresAt).getTime() <= Date.now()) {
+    const error = new Error("code_expired");
+    error.code = "code_expired";
+    throw error;
+  }
+
+  if (authCodeRecord.appKey !== normalizedApp) {
+    const error = new Error("invalid_audience");
+    error.code = "invalid_audience";
+    throw error;
+  }
+
+  if (String(authCodeRecord.redirectUri || "") !== normalizedRedirectUri) {
+    const error = new Error("invalid_redirect_uri");
+    error.code = "invalid_redirect_uri";
+    throw error;
+  }
+
+  const consumedRecord = await SsoAuthorizationCode.findOneAndUpdate(
+    {
+      _id: authCodeRecord._id,
+      consumedAt: null,
+      expiresAt: { $gt: new Date() }
+    },
+    {
+      $set: {
+        consumedAt: new Date()
+      }
+    },
+    { new: true }
+  ).lean();
+
+  if (!consumedRecord) {
+    const error = new Error("code_already_used");
+    error.code = "code_already_used";
+    throw error;
+  }
+
+  const claimsSnapshot = consumedRecord.claimsSnapshot && typeof consumedRecord.claimsSnapshot === "object"
+    ? consumedRecord.claimsSnapshot
+    : {};
+
+  return {
+    ...claimsSnapshot,
+    sub: claimsSnapshot.sub || String(consumedRecord.userId),
+    applicationId: claimsSnapshot.applicationId || String(consumedRecord.applicationId || ""),
+    appKey: claimsSnapshot.appKey || consumedRecord.appKey
+  };
 };
 
 export const ensureDefaultSuperAdminCredentials = async () => {
@@ -2029,7 +2367,7 @@ export const ensureDefaultSuperAdminCredentials = async () => {
   });
 
   if (existing) {
-    console.log("[SEED] SUPER_ADMIN already exists: admin@gitakshmi.com");
+    console.log("[SEED] SUPER_ADMIN already exists: admin@example.com");
     if (existing.role !== ROLES.SUPER_ADMIN) {
       existing.role = ROLES.SUPER_ADMIN;
     }
@@ -2050,10 +2388,13 @@ export const ensureDefaultSuperAdminCredentials = async () => {
     name: DEFAULT_SUPER_ADMIN.name,
     email: DEFAULT_SUPER_ADMIN.email.toLowerCase(),
     password: hashedPassword,
+    authSource: "local",
+    accountStatus: "active",
+    allowDirectLogin: true,
     role: ROLES.SUPER_ADMIN,
     tenantId: null
   });
 
 
-  console.log("[SEED] SUPER_ADMIN created: admin@gitakshmi.com");
+  console.log("[SEED] SUPER_ADMIN created: admin@example.com");
 };

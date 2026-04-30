@@ -5,7 +5,10 @@ import { useAuth } from "../context/AuthContext";
 import api from "../lib/api";
 import { appendActivity, readActivities } from "../lib/activityLog";
 import AdminLayout from "../components/AdminLayout";
+import ApplicationRegistryPanel from "../components/ApplicationRegistryPanel";
+import AccountsPanel from "../components/AccountsPanel";
 import { useSuperAdmin } from "../context/SuperAdminContext";
+import "./Dashboard.css";
 
 const defaultCreateForm = {
   name: "",
@@ -136,10 +139,12 @@ function Dashboard() {
   const {
     products,
     companies,
+    applications,
     loading,
     error,
     loadData,
     setCompanies,
+    setApplications,
     setError
   } = useSuperAdmin();
 
@@ -147,6 +152,7 @@ function Dashboard() {
   const [companyLogoPreview, setCompanyLogoPreview] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+  const [selectedApplicationConfig, setSelectedApplicationConfig] = useState(null);
 
   const productNames = useMemo(() => products.map((item) => item.name), [products]);
   const selectableProductNames = useMemo(
@@ -174,6 +180,18 @@ function Dashboard() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const handleSidebarTabChange = (nextTab) => {
+    if (nextTab === "product-config") {
+      setSelectedApplicationConfig(null);
+    }
+    setActiveTab(nextTab);
+  };
+
+  const handleEditApplication = (application) => {
+    setSelectedApplicationConfig(application);
+    setActiveTab("product-config");
+  };
 
   // Sync activeTab if location state changes (e.g. sidebar click from other page)
   useEffect(() => {
@@ -588,7 +606,7 @@ function Dashboard() {
 
   const deleteCompanyById = async (company) => {
     if (!company?._id) return;
-    const ok = window.confirm(`Delete company "${company.name}"? This will remove the company and its admin users.`);
+    const ok = window.confirm(`Soft delete company "${company.name}"? The record stays in MongoDB, but it will be hidden and its users/products will be disabled.`);
     if (!ok) return;
 
     setMessage("");
@@ -599,10 +617,10 @@ function Dashboard() {
       setCompanies((prev) => prev.filter((c) => c._id !== company._id));
       if (selectedCompany?._id === company._id) setSelectedCompany(null);
       if (productTabCompany?._id === company._id) setProductTabCompany(null);
-      setMessage("Company deleted successfully");
+      setMessage("Company soft deleted successfully");
       setTimeout(() => setMessage(""), 3000);
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to delete company");
+      setError(err?.response?.data?.message || "Failed to soft delete company");
     } finally {
       setSubmitting(false);
     }
@@ -651,9 +669,14 @@ function Dashboard() {
 
   const renderTabContent = () => {
     switch (activeTab) {
+      case "accounts":
+        return <AccountsPanel />;
       case "dashboard":
         const activeCompanies = companies.filter(c => (c.products || []).filter(p => !["PMS", "PSA"].includes(String(p).toUpperCase())).length > 0).length;
         const inactiveCompanies = companies.length - activeCompanies;
+        const activeApplications = (applications || []).filter(
+          (application) => String(application?.status || "").toLowerCase() === "active"
+        ).length;
 
         const productCounts = products
           .filter(p => !["PMS", "PSA"].includes(String(p.name || "").toUpperCase()))
@@ -685,6 +708,24 @@ function Dashboard() {
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
                   <strong style={{ fontSize: '1.5rem', color: '#d97706' }}>{inactiveCompanies}</strong>
                   <span style={{ fontSize: '0.7rem', color: '#d97706' }}>Awaiting</span>
+                </div>
+              </div>
+              <div
+                className="card"
+                style={{
+                  flex: 1,
+                  minWidth: '220px',
+                  padding: '12px 16px',
+                  borderLeft: '4px solid #7c3aed',
+                  background: 'linear-gradient(to right, #f5f3ff, #ffffff)',
+                  cursor: 'pointer'
+                }}
+                onClick={() => setActiveTab('applications')}
+              >
+                <p className="stat-label" style={{ fontSize: '0.7rem', marginBottom: '2px' }}>Registered Apps</p>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                  <strong style={{ fontSize: '1.5rem', color: '#6d28d9' }}>{applications.length}</strong>
+                  <span style={{ fontSize: '0.7rem', color: '#6d28d9' }}>{activeApplications} Active</span>
                 </div>
               </div>
             </div>
@@ -866,6 +907,32 @@ function Dashboard() {
             )}
           </div>
         );
+      case "applications":
+        return (
+          <ApplicationRegistryPanel
+            applications={applications}
+            companies={companies}
+            setApplications={setApplications}
+            setError={setError}
+            reloadData={() => loadData(true)}
+            section="registry"
+            onEditApplication={handleEditApplication}
+          />
+        );
+
+      case "product-config":
+        return (
+          <ApplicationRegistryPanel
+            applications={applications}
+            companies={companies}
+            setApplications={setApplications}
+            setError={setError}
+            reloadData={() => loadData(true)}
+            section="configuration"
+            initialApplication={selectedApplicationConfig}
+          />
+        );
+
       case "company":
         if (!selectedCompany) {
           const searchValue = String(companySearch || "").trim().toLowerCase();
@@ -888,7 +955,7 @@ function Dashboard() {
           const totalProducts = products.length;
 
           return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', animation: 'fadeIn 0.3s ease-out' }}>
+            <div className="company-workspace" style={{ display: 'flex', flexDirection: 'column', gap: '12px', animation: 'fadeIn 0.3s ease-out' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '12px' }}>
                 <div className="card" style={{ padding: '14px 16px', borderLeft: '4px solid #2563eb', background: 'linear-gradient(to right, #eff6ff, #ffffff)' }}>
                   <div style={{ fontSize: '0.7rem', fontWeight: 900, letterSpacing: '0.12em', color: '#64748b', textTransform: 'uppercase' }}>Total Company</div>
@@ -1263,6 +1330,30 @@ function Dashboard() {
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 2L3 14h7l-1 8 10-12h-7l1-8Z" />
                             </svg>
                           </button>
+
+                          {/* Soft Delete */}
+                          <button
+                            type="button"
+                            title="Soft Delete"
+                            onClick={() => deleteCompanyById(company)}
+                            style={{
+                              border: 'none',
+                              background: 'transparent',
+                              cursor: 'pointer',
+                              padding: 0,
+                              color: '#b91c1c',
+                              display: 'inline-flex',
+                              opacity: submitting ? 0.7 : 1
+                            }}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" style={{ display: 'block' }}>
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 6h18" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 6V4h8v2" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 6l-1 14H6L5 6" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 11v5" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 11v5" />
+                            </svg>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1273,8 +1364,8 @@ function Dashboard() {
           );
         }
 
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'fadeInRight 0.3s ease-out' }}>
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', animation: 'fadeInRight 0.3s ease-out' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               <button
                 onClick={() => setSelectedCompany(null)}
@@ -1741,95 +1832,116 @@ function Dashboard() {
             </div>
           </div>
         );
-      case "products":
+      case "products": {
+        const totalCompanyProducts = companies.reduce((total, company) => {
+          const assignedProducts = Array.isArray(company.products) ? company.products.filter(Boolean) : [];
+          return total + assignedProducts.length;
+        }, 0);
+        const companiesWithProducts = companies.filter(
+          (company) => Array.isArray(company.products) && company.products.length > 0
+        ).length;
+
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', animation: 'fadeIn 0.3s ease-out' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div className="module-workspace">
+            <section className="module-hero">
               <div>
-                <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em' }}>
-                  Module Entitlements
-                </h2>
+                <span className="dashboard-kicker">Module access</span>
+                <h2>Product Module Control</h2>
+                <p>
+                  Pick a company, open its product workspace, and switch modules on or off from one place.
+                </p>
               </div>
-            </div>
-
-            <div className="card" style={{ padding: '0', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1.5fr) minmax(150px, 1fr) 100px', padding: '16px 24px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Organization</div>
-                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Modules Active</div>
-                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>Action</div>
+              <div className="module-hero-metrics" aria-label="Module summary">
+                <div>
+                  <strong>{companies.length}</strong>
+                  <span>Companies</span>
+                </div>
+                <div>
+                  <strong>{companiesWithProducts}</strong>
+                  <span>With products</span>
+                </div>
+                <div>
+                  <strong>{totalCompanyProducts}</strong>
+                  <span>Assignments</span>
+                </div>
               </div>
+            </section>
 
-              <div style={{ overflow: 'visible' }}>
-                {companies.map((company) => {
-                  const visibleProducts = (company.products || []).filter((p) => String(p).toUpperCase() !== "TMS");
+            <section className="module-company-grid" aria-label="Company module workspaces">
+              {companies.length === 0 ? (
+                <div className="module-empty-state">
+                  <strong>No companies found</strong>
+                  <span>Create a company first, then assign products and modules here.</span>
+                </div>
+              ) : (
+                companies.map((company) => {
+                  const assignedProducts = Array.isArray(company.products) ? company.products.filter(Boolean) : [];
+                  const companyInitial = (company?.name || "?").trim().charAt(0).toUpperCase();
+                  const statusText = assignedProducts.length > 0 ? "Ready to configure" : "Needs product";
+
                   return (
-                    <div
+                    <article
                       key={company._id}
+                      className={`module-company-card ${assignedProducts.length ? "has-products" : "needs-products"}`}
                       onClick={() => navigate(`/companies/${company._id}/products`)}
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(200px, 1.5fr) minmax(150px, 1fr) 100px',
-                        padding: '16px 24px',
-                        alignItems: 'center',
-                        borderBottom: '1px solid #f1f5f9',
-                        cursor: 'pointer',
-                        transition: 'background 0.2s',
-                        background: '#ffffff'
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          navigate(`/companies/${company._id}/products`);
+                        }
                       }}
-                      onMouseOver={(e) => (e.currentTarget.style.background = '#f8fafc')}
-                      onMouseOut={(e) => (e.currentTarget.style.background = '#ffffff')}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#eff6ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '800', fontSize: '1.1rem' }}>
-                          {(company?.name || "?").charAt(0).toUpperCase()}
+                      <div className="module-company-topline">
+                        <div className="module-company-avatar">{companyInitial}</div>
+                        <div className="module-company-title">
+                          <h3>{company.name}</h3>
+                          <span>{company.email || "No admin email"}</span>
                         </div>
-                        <div style={{ overflow: 'hidden', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap' }}>
-                            {company.name}
-                          </div>
-                          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b', whiteSpace: 'nowrap' }}>
-                            ({company.email})
-                          </div>
-                        </div>
+                        <span className="module-status-pill">{statusText}</span>
                       </div>
 
-                      <div>
-                        {visibleProducts.length > 0 ? (
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            {visibleProducts.map((p) => (
-                              <span key={p} style={{ fontSize: '0.7rem', padding: '4px 10px', background: '#f0fdf4', color: '#166534', borderRadius: '6px', fontWeight: 700 }}>
-                                {p}
+                      <div className="module-product-area">
+                        <span className="module-section-label">Assigned products</span>
+                        {assignedProducts.length > 0 ? (
+                          <div className="module-product-chips">
+                            {assignedProducts.map((productName) => (
+                              <span key={productName} className="module-product-chip">
+                                {productName}
                               </span>
                             ))}
                           </div>
                         ) : (
-                          <span className="muted" style={{ fontSize: '0.8rem', fontStyle: 'italic' }}>None Provisioned</span>
+                          <div className="module-no-products">No products assigned yet.</div>
                         )}
                       </div>
 
-                      <div style={{ textAlign: 'right' }}>
+                      <div className="module-company-footer">
+                        <span>{assignedProducts.length} product{assignedProducts.length === 1 ? "" : "s"}</span>
                         <Link
                           to={`/companies/${company._id}/products`}
                           onClick={(e) => e.stopPropagation()}
-                          style={{ background: '#eff6ff', color: '#2563eb', padding: '6px 14px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: 800, border: 'none', cursor: 'pointer', textDecoration: 'none', display: 'inline-block' }}
+                          className="module-configure-button"
                         >
-                          Manage
+                          Configure modules
                         </Link>
                       </div>
-                    </div>
+                    </article>
                   );
-                })}
-              </div>
-            </div>
+                })
+              )}
+            </section>
           </div>
         );
+      }
       default:
         return null;
     }
   };
 
   return (
-    <AdminLayout activeTab={activeTab} setActiveTab={setActiveTab}>
+    <AdminLayout activeTab={activeTab} setActiveTab={handleSidebarTabChange}>
       {error ? (
         <div style={{ padding: "14px 22px 0 22px" }}>
           <div

@@ -1,24 +1,32 @@
 import express from "express";
 import {
-    createApp,
-    assignAppToCompany,
-    assignAppToUser
+  createApp,
+  getAppByKey,
+  getAppConnectorTemplate,
+  getCompanyApps,
+  listApps,
+  rotateAppClientSecret,
+  setAppStatus,
+  syncLegacyApps,
+  updateApp,
+  deleteApp
 } from "../controllers/app.controller.js";
-
-import {
-    verifyToken,
-    isAdmin
-} from "../middleware/auth.middleware.js";
+import { verifyToken, authorizeRoles } from "../middleware/auth.middleware.js";
+import { ROLES } from "../constants/roles.js";
 
 const router = express.Router();
 
-// 🔥 Create new application (Admin only)
-router.post("/create", verifyToken, isAdmin, createApp);
+router.use(verifyToken, authorizeRoles(ROLES.SUPER_ADMIN));
 
-// 🔥 Assign app to company (Admin only)
-router.post("/assign-company", verifyToken, isAdmin, assignAppToCompany);
-
-// 🔥 Assign app to user (Admin only)
-router.post("/assign-user", verifyToken, isAdmin, assignAppToUser);
+router.get("/", listApps);
+router.get("/key/:key/connector-template", getAppConnectorTemplate);
+router.get("/key/:key", getAppByKey);
+router.get("/companies/:companyId", getCompanyApps);
+router.post("/legacy-sync", syncLegacyApps);
+router.post("/", createApp);
+router.put("/:id", updateApp);
+router.delete("/:id", deleteApp);
+router.post("/:id/rotate-secret", rotateAppClientSecret);
+router.patch("/:id/status", setAppStatus);
 
 export default router;

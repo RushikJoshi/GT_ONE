@@ -1,5 +1,5 @@
-import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import { verifyJwtWithContract } from "../services/auth.service.js";
 
 /**
  * Middleware to verify SSO session via HTTP-only cookie
@@ -23,9 +23,9 @@ export const verifySsoSession = async (req, res, next) => {
 
     // Verify token
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET, {
-        issuer: process.env.JWT_ISSUER || "gitakshmi-sso",
-        algorithms: (process.env.JWT_ALLOWED_ALGS || "HS256").split(",").filter(Boolean)
+      const decoded = await verifyJwtWithContract({
+        token,
+        audience: "sso"
       });
 
       // Fetch user to ensure they still exist and are active

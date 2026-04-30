@@ -8,7 +8,13 @@ import {
   normalizeHrmsModuleSettings,
   HRMS_MODULE_KEYS
 } from "../constants/hrmsModules.js";
+import {
+  getProductModuleDefinitions,
+  normalizeProductModuleSettings,
+  normalizeProductName
+} from "../constants/productModules.js";
 import { syncCompanyToHrms } from "./hrmsProvisioning.service.js";
+import { syncCompanyApplicationAssignments } from "./applicationRegistry.service.js";
 
 const normalizeProductNames = (products) =>
   Array.isArray(products)
@@ -17,9 +23,67 @@ const normalizeProductNames = (products) =>
         .filter(Boolean)
     : [];
 
+const hasStoredModuleState = (link) => {
+  if (!link) return false;
+  const enabledModules = link.enabledModules && typeof link.enabledModules === "object"
+    ? link.enabledModules
+    : {};
+  return Object.keys(enabledModules).length > 0 || (Array.isArray(link.modules) && link.modules.length > 0);
+};
+
+const normalizeCompanyProductModuleLink = ({ company, link, productName }) => {
+  const normalizedProduct = normalizeProductName(productName || link?.productId?.name);
+  const storedEnabledModules = hasStoredModuleState(link) ? link.enabledModules : undefined;
+  const storedModules = hasStoredModuleState(link) ? link.modules : undefined;
+
+  if (normalizedProduct === "HRMS") {
+    return normalizeProductModuleSettings(
+      normalizedProduct,
+      storedEnabledModules || company?.hrmsEnabledModules,
+      storedModules || company?.hrmsModules
+    );
+  }
+
+  return normalizeProductModuleSettings(
+    normalizedProduct,
+    storedEnabledModules,
+    storedModules
+  );
+};
+
+const mapCompanyProductModuleResponse = ({ company, link }) => {
+  const productName = normalizeProductName(link?.productId?.name);
+  const normalized = normalizeCompanyProductModuleLink({ company, link, productName });
+
+  return {
+    productId: link?.productId?._id ? String(link.productId._id) : null,
+    productName,
+    moduleDefinitions: normalized.moduleDefinitions,
+    moduleKeys: normalized.moduleKeys,
+    enabledModules: normalized.enabledModules,
+    modules: normalized.modules
+  };
+};
+
+const buildProductModuleInsert = ({ company, product, fallbackLink = null }) => {
+  const normalized = normalizeCompanyProductModuleLink({
+    company,
+    link: fallbackLink,
+    productName: product.name
+  });
+
+  return {
+    companyId: company._id,
+    productId: product._id,
+    isActive: true,
+    enabledModules: normalized.enabledModules,
+    modules: normalized.modules
+  };
+};
+
 const generateCompanyCode = async ({ name, email }) => {
   // Requirement: 3 letters from company name + 001/002/...
-  // Example: "gitakshmi" -> "GIT001"
+  // Example: "example" -> "EXA001"
   const nameSource = String(name || "").trim();
   const emailSource = String(email || "").trim();
   const source = (nameSource || emailSource)
@@ -244,11 +308,7 @@ export const createCompanyWithAdmin = async ({
   if (productDocs.length) {
     try {
       await CompanyProduct.insertMany(
-        productDocs.map((product) => ({
-          companyId: company._id,
-          productId: product._id,
-          isActive: true
-        }))
+        productDocs.map((product) => buildProductModuleInsert({ company, product }))
       );
     } catch (error) {
       if (error.code === 11000) {
@@ -267,6 +327,23 @@ export const createCompanyWithAdmin = async ({
   }
 
   const selectedProductNames = productDocs.map((product) => product.name);
+  let applicationSync = null;
+  try {
+    applicationSync = await syncCompanyApplicationAssignments({
+      companyId: company._id,
+      productNames: selectedProductNames,
+      source: "legacy_product_sync"
+    });
+  } catch (error) {
+    console.warn(`[APPLICATIONS] Failed to sync company applications for company=${String(company._id)}: ${error.message}`);
+    applicationSync = {
+      synced: false,
+      companyId: String(company._id),
+      applications: [],
+      missingProductNames: selectedProductNames
+    };
+  }
+
   const hasHrms = selectedProductNames.some((p) => String(p).toUpperCase() === "HRMS");
   let provisioning = {
     warning: true,
@@ -298,13 +375,26 @@ export const createCompanyWithAdmin = async ({
     company,
     companyAdmin,
     products: selectedProductNames,
+    applicationSync,
     adminPlainPassword: adminUserPassword,
     provisioning
   };
 };
 
+const notDeletedCompanyQuery = (filter = {}) => ({
+  $and: [
+    filter,
+    {
+      $or: [
+        { deletedAt: { $exists: false } },
+        { deletedAt: null }
+      ]
+    }
+  ]
+});
+
 export const getCompanyHrmsModulesById = async (companyId) => {
-  const company = await Company.findById(companyId).lean();
+  const company = await Company.findOne(notDeletedCompanyQuery({ _id: companyId })).lean();
   if (!company) {
     return { error: { status: 404, message: "Company not found" } };
   }
@@ -320,11 +410,39 @@ export const getCompanyHrmsModulesById = async (companyId) => {
   };
 };
 
+export const getCompanyProductModulesById = async (companyId) => {
+  const company = await Company.findOne(notDeletedCompanyQuery({ _id: companyId })).lean();
+  if (!company) {
+    return { error: { status: 404, message: "Company not found" } };
+  }
+
+  const links = await CompanyProduct.find({
+    companyId: company._id,
+    isActive: true
+  })
+    .populate("productId", "name")
+    .lean();
+
+  const products = links
+    .filter((link) => link.productId?.name)
+    .map((link) => mapCompanyProductModuleResponse({ company, link }));
+
+  return {
+    companyId: String(company._id),
+    companyName: company.name,
+    products,
+    moduleDefinitions: products.reduce((acc, product) => {
+      acc[product.productName] = product.moduleDefinitions;
+      return acc;
+    }, {})
+  };
+};
+
 export const updateCompanyHrmsModulesById = async (
   companyId,
   { hrmsEnabledModules, hrmsModules }
 ) => {
-  const company = await Company.findById(companyId);
+  const company = await Company.findOne(notDeletedCompanyQuery({ _id: companyId }));
   if (!company) {
     return { error: { status: 404, message: "Company not found" } };
   }
@@ -334,6 +452,22 @@ export const updateCompanyHrmsModulesById = async (
   company.hrmsEnabledModules = normalized.hrmsEnabledModules;
   company.hrmsModules = normalized.hrmsModules;
   await company.save();
+
+  const hrmsProduct = await Product.findOne({ name: "HRMS" }).collation({
+    locale: "en",
+    strength: 2
+  });
+  if (hrmsProduct) {
+    await CompanyProduct.updateOne(
+      { companyId: company._id, productId: hrmsProduct._id },
+      {
+        $set: {
+          enabledModules: normalized.hrmsEnabledModules,
+          modules: normalized.hrmsModules
+        }
+      }
+    );
+  }
 
   const companyProducts = await CompanyProduct.find({
     companyId: company._id,
@@ -359,4 +493,113 @@ export const updateCompanyHrmsModulesById = async (
     hrmsModules: normalized.hrmsModules,
     provisioning
   };
+};
+
+export const updateCompanyProductModulesById = async (
+  companyId,
+  productName,
+  { enabledModules, modules }
+) => {
+  const normalizedProduct = normalizeProductName(productName);
+  const company = await Company.findOne(notDeletedCompanyQuery({ _id: companyId }));
+  if (!company) {
+    return { error: { status: 404, message: "Company not found" } };
+  }
+
+  const product = await Product.findOne({ name: normalizedProduct }).collation({
+    locale: "en",
+    strength: 2
+  });
+  if (!product) {
+    return { error: { status: 404, message: "Product not found" } };
+  }
+
+  const link = await CompanyProduct.findOne({
+    companyId: company._id,
+    productId: product._id,
+    isActive: true
+  }).populate("productId", "name");
+
+  if (!link) {
+    return { error: { status: 404, message: "Product is not assigned to this company" } };
+  }
+
+  const definitions = getProductModuleDefinitions(normalizedProduct);
+  if (!definitions.length) {
+    return { error: { status: 400, message: "No module definition exists for this product" } };
+  }
+
+  const normalized = normalizeProductModuleSettings(normalizedProduct, enabledModules, modules);
+  link.enabledModules = normalized.enabledModules;
+  link.modules = normalized.modules;
+  await link.save();
+
+  let provisioning = null;
+  if (normalizedProduct === "HRMS") {
+    company.hrmsEnabledModules = normalized.enabledModules;
+    company.hrmsModules = normalized.modules;
+    await company.save();
+
+    const companyProducts = await CompanyProduct.find({
+      companyId: company._id,
+      isActive: true
+    }).populate("productId", "name");
+    const products = companyProducts.map((item) => item.productId?.name).filter(Boolean);
+    const admin = await User.findOne({ companyId: company._id, role: ROLES.COMPANY_ADMIN })
+      .select("name email")
+      .lean();
+    provisioning = await syncCompanyToHrms({
+      company,
+      products,
+      adminName: admin?.name,
+      adminEmail: admin?.email,
+      source: "update_product_modules"
+    });
+  }
+
+  return {
+    companyId: String(company._id),
+    companyName: company.name,
+    productId: String(product._id),
+    productName: normalizedProduct,
+    moduleDefinitions: normalized.moduleDefinitions,
+    moduleKeys: normalized.moduleKeys,
+    enabledModules: normalized.enabledModules,
+    modules: normalized.modules,
+    provisioning
+  };
+};
+
+export const getCompanyProductModuleStats = async () => {
+  const companies = await Company.find(
+    notDeletedCompanyQuery(),
+    { hrmsEnabledModules: 1, hrmsModules: 1 }
+  ).lean();
+  const companyById = new Map(companies.map((company) => [String(company._id), company]));
+  const links = await CompanyProduct.find({
+    companyId: { $in: companies.map((company) => company._id) },
+    isActive: true
+  })
+    .populate("productId", "name")
+    .lean();
+
+  const stats = { total: 0, active: 0, inactive: 0 };
+
+  for (const link of links) {
+    if (!link.productId?.name) continue;
+    const company = companyById.get(String(link.companyId)) || null;
+    const normalized = normalizeCompanyProductModuleLink({
+      company,
+      link,
+      productName: link.productId.name
+    });
+    const totalCount = normalized.moduleKeys.length;
+    const activeCount = normalized.modules.length;
+    stats.total += totalCount;
+    stats.active += activeCount;
+    stats.inactive += Math.max(0, totalCount - activeCount);
+  }
+
+  stats.inactive = Math.max(0, stats.total - stats.active);
+  return stats;
 };

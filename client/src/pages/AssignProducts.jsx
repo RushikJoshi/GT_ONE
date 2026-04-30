@@ -84,31 +84,97 @@ const ALL_HRMS_MODULE_KEYS = [
   "reports"
 ];
 
-/** Which modules appear when a product is selected (keys must exist in API `moduleKeys`). */
-const MODULE_KEYS_BY_PRODUCT = {
-  CRM: ["recruitment"],
-  HRMS: ALL_HRMS_MODULE_KEYS,
-  PMS: ["documentManagement"],
-  DMS: ["documentManagement"]
-};
-
-function getVisibleModuleKeys(selectedProductName, moduleKeysFromApi) {
-  if (!selectedProductName) return [];
-  const upper = String(selectedProductName || "").toUpperCase();
-  const preset = MODULE_KEYS_BY_PRODUCT[upper];
-  const allowed = new Set(moduleKeysFromApi || []);
-  if (!preset) {
-    return (moduleKeysFromApi || []).filter((k) => ALL_HRMS_MODULE_KEYS.includes(k));
-  }
-  return preset.filter((k) => allowed.has(k));
-}
-
 function getProductScopedModuleLabel(selectedProductName, moduleKey, fallbackLabel) {
   const upper = String(selectedProductName || "").toUpperCase();
   if (upper === "CRM" && moduleKey === "recruitment") return "CRM";
   if (upper === "PMS" && moduleKey === "documentManagement") return "PMS";
   if (upper === "DMS" && moduleKey === "documentManagement") return "DMS";
   return fallbackLabel;
+}
+
+const FALLBACK_MODULE_DEFINITIONS = {
+  HRMS: ALL_HRMS_MODULE_KEYS.map((key) => ({ key, label: moduleLabelFallback(key) })),
+  TMS: [
+    { key: "projects", label: "Projects" },
+    { key: "tasks", label: "Tasks" },
+    { key: "timesheets", label: "Timesheets" },
+    { key: "milestones", label: "Milestones" },
+    { key: "reports", label: "Reports" }
+  ],
+  CRM: [
+    { key: "leads", label: "Leads" },
+    { key: "contacts", label: "Contacts" },
+    { key: "deals", label: "Deals" },
+    { key: "pipeline", label: "Pipeline" },
+    { key: "activities", label: "Activities" },
+    { key: "reports", label: "Reports" }
+  ],
+  PMS: [
+    { key: "projects", label: "Projects" },
+    { key: "tasks", label: "Tasks" },
+    { key: "milestones", label: "Milestones" },
+    { key: "files", label: "Files" },
+    { key: "reports", label: "Reports" }
+  ],
+  PSA: [
+    { key: "proposals", label: "Proposals" },
+    { key: "resourcePlanning", label: "Resource Planning" },
+    { key: "billing", label: "Billing" },
+    { key: "projectAccounting", label: "Project Accounting" },
+    { key: "reports", label: "Reports" }
+  ],
+  DMS: [
+    { key: "documents", label: "Documents" },
+    { key: "folders", label: "Folders" },
+    { key: "sharing", label: "Sharing" },
+    { key: "approvals", label: "Approvals" },
+    { key: "auditTrail", label: "Audit Trail" }
+  ]
+};
+
+const MODULE_COLORS = [
+  "#2563eb",
+  "#10b981",
+  "#ef4444",
+  "#f59e0b",
+  "#6366f1",
+  "#8b5cf6",
+  "#7c3aed",
+  "#a855f7",
+  "#ec4899",
+  "#14b8a6"
+];
+
+function moduleLabelFallback(key) {
+  const labels = {
+    hr: "HR Management",
+    attendance: "Attendance",
+    leave: "Leave Management",
+    payroll: "Payroll System",
+    recruitment: "Recruitment",
+    backgroundVerification: "Background Verification",
+    documentManagement: "Document Management",
+    employeePortal: "Employee Portal",
+    socialMediaIntegration: "Social Media Integration",
+    reports: "Reports"
+  };
+  return labels[key] || key;
+}
+
+function normalizeProductKey(productName) {
+  return String(productName || "").trim().toUpperCase();
+}
+
+function mapModuleDefinitions(definitions, productName) {
+  const fallback = FALLBACK_MODULE_DEFINITIONS[normalizeProductKey(productName)] || [];
+  const source = Array.isArray(definitions) && definitions.length ? definitions : fallback;
+  return source.reduce((acc, item, index) => {
+    acc[item.key] = {
+      label: item.label || item.key,
+      color: item.color || MODULE_COLORS[index % MODULE_COLORS.length]
+    };
+    return acc;
+  }, {});
 }
 
 function AssignProducts() {
@@ -118,12 +184,10 @@ function AssignProducts() {
   const {
     products: allProducts,
     companies,
-    loadData: loadGlobalData,
-    isLoaded: isGlobalLoaded,
-    loading: globalLoading
+    isLoaded: isGlobalLoaded
   } = useSuperAdmin();
 
-  const [moduleKeys, setModuleKeys] = useState([]);
+  const [productModuleConfigs, setProductModuleConfigs] = useState({});
   const [company, setCompany] = useState(null);
   const [enabledModules, setEnabledModules] = useState({});
   const [loading, setLoading] = useState(!isGlobalLoaded);
@@ -154,8 +218,8 @@ function AssignProducts() {
       setLoading(true);
 
       // Always fetch latest data for this company specifically to ensure we are up to date
-      const [hrmsModulesRes, statsRes, companiesRes] = await Promise.all([
-        api.get(`/super-admin/companies/${companyId}/hrms-modules`),
+      const [productModulesRes, statsRes, companiesRes] = await Promise.all([
+        api.get(`/super-admin/companies/${companyId}/product-modules`),
         api.get("/super-admin/module-stats"),
         api.get("/companies") // Fetch fresh companies to ensure product assignments are latest
       ]);
@@ -169,10 +233,15 @@ function AssignProducts() {
       }
 
       setCompany(targetCompany);
-      setModuleKeys(hrmsModulesRes.data.moduleKeys || []);
-      const modules = hrmsModulesRes.data.hrmsEnabledModules || {};
-      setEnabledModules(modules);
-      setServerModules(modules);
+      const productModules = Array.isArray(productModulesRes.data?.products)
+        ? productModulesRes.data.products
+        : [];
+      const configs = productModules.reduce((acc, item) => {
+        const key = normalizeProductKey(item.productName);
+        if (key) acc[key] = item;
+        return acc;
+      }, {});
+      setProductModuleConfigs(configs);
 
       const serverStats = statsRes?.data || null;
       if (
@@ -195,9 +264,7 @@ function AssignProducts() {
   }, [loadPage]);
 
   const filteredProducts = useMemo(() => {
-    const products = (allProducts || []).filter(
-      (p) => String(p?.name || "").toUpperCase() !== "TMS"
-    );
+    const products = allProducts || [];
 
     const companyProducts = Array.isArray(company?.products) ? company.products : null;
     // Only show products that are assigned to the selected company.
@@ -221,9 +288,23 @@ function AssignProducts() {
     });
   }, [filteredProducts]);
 
+  const selectedProductKey = normalizeProductKey(selectedProductName);
+  const selectedModuleConfig = productModuleConfigs[selectedProductKey] || null;
+  const moduleKeys = selectedModuleConfig?.moduleKeys || [];
+  const moduleMeta = useMemo(
+    () => mapModuleDefinitions(selectedModuleConfig?.moduleDefinitions, selectedProductName),
+    [selectedModuleConfig, selectedProductName]
+  );
+
+  useEffect(() => {
+    const modules = selectedModuleConfig?.enabledModules || {};
+    setEnabledModules(modules);
+    setServerModules(modules);
+  }, [selectedModuleConfig]);
+
   const visibleModuleKeys = useMemo(
-    () => getVisibleModuleKeys(selectedProductName, moduleKeys),
-    [selectedProductName, moduleKeys]
+    () => moduleKeys,
+    [moduleKeys]
   );
 
   const toggleModule = (key) => {
@@ -234,9 +315,9 @@ function AssignProducts() {
   };
 
   const getChangesSummary = (payload) => {
-    const keysForDiff = Array.isArray(moduleKeys) && moduleKeys.length ? moduleKeys : ALL_HRMS_MODULE_KEYS;
-    const activatedKeys = keysForDiff.filter((k) => !Boolean(serverModules[k]) && Boolean(payload[k]));
-    const deactivatedKeys = keysForDiff.filter((k) => Boolean(serverModules[k]) && !Boolean(payload[k]));
+    const keysForDiff = Array.isArray(visibleModuleKeys) ? visibleModuleKeys : [];
+    const activatedKeys = keysForDiff.filter((k) => !serverModules[k] && Boolean(payload[k]));
+    const deactivatedKeys = keysForDiff.filter((k) => Boolean(serverModules[k]) && !payload[k]);
     
     return {
       activated: activatedKeys.map(k => moduleMeta[k]?.label || k),
@@ -258,14 +339,25 @@ function AssignProducts() {
       }
 
       setSavingModules(true);
-      const res = await api.put(`/super-admin/companies/${companyId}/hrms-modules`, {
-        hrmsEnabledModules: payload
+      const res = await api.put(`/super-admin/companies/${companyId}/products/${encodeURIComponent(selectedProductName)}/modules`, {
+        enabledModules: payload
       });
       
-      const nextModules = res.data.hrmsEnabledModules || {};
+      const nextModules = res.data.enabledModules || {};
       setEnabledModules(nextModules);
       setServerModules(nextModules);
-      setModuleKeys(res.data.moduleKeys || moduleKeys);
+      setProductModuleConfigs((prev) => ({
+        ...prev,
+        [normalizeProductKey(res.data.productName || selectedProductName)]: {
+          ...(prev[normalizeProductKey(res.data.productName || selectedProductName)] || {}),
+          productId: res.data.productId || selectedModuleConfig?.productId || null,
+          productName: res.data.productName || selectedProductName,
+          moduleDefinitions: res.data.moduleDefinitions || selectedModuleConfig?.moduleDefinitions || [],
+          moduleKeys: res.data.moduleKeys || moduleKeys,
+          enabledModules: nextModules,
+          modules: res.data.modules || []
+        }
+      }));
       
       try {
         const statsRes = await api.get("/super-admin/module-stats");
@@ -283,23 +375,23 @@ function AssignProducts() {
       }
 
       appendActivity({
-        type: "hrms_module_update",
-        title: "HRMS Modules Updated",
-        description: `Updated HRMS modules for ${company?.name || "company"}.`,
+        type: "product_module_update",
+        title: "Product Modules Updated",
+        description: `Updated ${formatGtProductName(selectedProductName)} modules for ${company?.name || "company"}.`,
         details: {
           companyName: company?.name || null,
-          product: "HRMS",
+          product: selectedProductName,
           activated,
           deactivated,
           allEnabled: Object.keys(nextModules).filter(k => nextModules[k]).map(k => moduleMeta[k]?.label || k)
         }
       });
 
-      showToast("success", "HRMS modules updated successfully");
+      showToast("success", "Product modules updated successfully");
       setShowConfirmModal(false);
       setPendingPayload(null);
     } catch (requestError) {
-      const message = requestError?.response?.data?.message || "Failed to update HRMS modules";
+      const message = requestError?.response?.data?.message || "Failed to update product modules";
       setError(message);
       showToast("error", message);
     } finally {
@@ -318,123 +410,23 @@ function AssignProducts() {
     setShowConfirmModal(true);
   };
 
-  const moduleMeta = {
-    hr: { label: "HR Management", color: "#2563eb", icon: "users" },
-    payroll: { label: "Payroll System", color: "#10b981", icon: "rupee" },
-    attendance: { label: "Attendance", color: "#ef4444", icon: "clock" },
-    leave: { label: "Leave Management", color: "#f59e0b", icon: "calendar" },
-    employeePortal: { label: "Employee Portal", color: "#6366f1", icon: "id" },
-    recruitment: { label: "Recruitment", color: "#8b5cf6", icon: "briefcase" },
-    backgroundVerification: { label: "Verification", color: "#7c3aed", icon: "shield" },
-    documentManagement: { label: "Doc Management", color: "#a855f7", icon: "file" },
-    socialMediaIntegration: { label: "Social Media", color: "#ec4899", icon: "share" },
-    reports: { label: "Reports", color: "#14b8a6", icon: "chart" }
-  };
-
-  const renderIcon = (name, stroke = "currentColor") => {
-    switch (name) {
-      case "users":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M23 21v-2a4 4 0 0 0-3-3.87" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16 3.13a4 4 0 0 1 0 7.75" />
-          </svg>
-        );
-      case "rupee":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 4h12M6 8h12M8 20l8-10H8c0 3.5 2.5 6 6 6" />
-          </svg>
-        );
-      case "clock":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3 2" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-          </svg>
-        );
-      case "calendar":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 2v4M16 2v4" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h18" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 6h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z" />
-          </svg>
-        );
-      case "id":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16v12H4z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h6" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 14h10" />
-          </svg>
-        );
-      case "briefcase":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6V5a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v1" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h16" />
-          </svg>
-        );
-      case "shield":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
-          </svg>
-        );
-      case "file":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M14 2v6h6" />
-          </svg>
-        );
-      case "share":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16 6l-4-4-4 4" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 2v14" />
-          </svg>
-        );
-      case "chart":
-        return (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 19V5" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 19h16" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 15v-4" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 15V7" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16 15v-6" />
-          </svg>
-        );
-      default:
-        return null;
-    }
-  };
-
   const activeCount = visibleModuleKeys.filter((key) => Boolean(enabledModules[key])).length;
   const inactiveCount = Math.max(0, visibleModuleKeys.length - activeCount);
+  const allVisibleModulesEnabled =
+    visibleModuleKeys.length > 0 && visibleModuleKeys.every((key) => Boolean(enabledModules[key]));
+  const hasPendingChanges = getChangesSummary(enabledModules).hasChanges;
 
   const totalModulesAllCompanies = useMemo(() => {
-    // Total "module records" across:
-    // all companies -> all assigned products -> that product's module set
-    // (CRM=1, PMS=1, HRMS=10 based on MODULE_KEYS_BY_PRODUCT)
     const list = Array.isArray(companies) ? companies : [];
     return list.reduce((sum, c) => {
       const companyProducts = Array.isArray(c?.products) ? c.products : [];
       const normalizedProducts = companyProducts
-        .map((p) => String(p || "").trim().toUpperCase())
-        .filter(Boolean)
-        .filter((p) => p !== "TMS");
+        .map((p) => normalizeProductKey(p))
+        .filter(Boolean);
 
       const companyTotal = normalizedProducts.reduce((n, productName) => {
-        const preset = MODULE_KEYS_BY_PRODUCT[productName];
-        if (Array.isArray(preset)) return n + preset.length;
-        // unknown product => 0 modules in this screen
-        return n;
+        const definitions = FALLBACK_MODULE_DEFINITIONS[productName] || [];
+        return n + definitions.length;
       }, 0);
 
       return sum + companyTotal;
@@ -582,13 +574,13 @@ function AssignProducts() {
             </div>
           </div>
 
-          {/* Right: HRMS Modules */}
+          {/* Right: Product Modules */}
           <div className="config-right">
             <div className="module-card module-card-pad">
               <div className="modules-head">
                 <div className="modules-kpi">
                   <span style={{ opacity: 0.9 }}>
-                    {activeCount} Modules
+                    {activeCount} Active / {inactiveCount} Disabled
                     {selectedProductName ? (
                       <span className="modules-kpi-product"> · {formatGtProductName(selectedProductName)}</span>
                     ) : null}
@@ -600,7 +592,7 @@ function AssignProducts() {
                   onClick={toggleAllModules}
                   disabled={savingModules || visibleModuleKeys.length === 0}
                 >
-                  Enable All
+                  {allVisibleModulesEnabled ? "Disable All" : "Enable All"}
                 </button>
               </div>
 
@@ -613,7 +605,7 @@ function AssignProducts() {
                 {visibleModuleKeys.map((key) => {
                   const meta = moduleMeta[key] || { label: String(key), color: "#2563eb", icon: "file" };
                   const isOn = Boolean(enabledModules[key]);
-                  const moduleLabel = getProductScopedModuleLabel(selectedProductName, key, meta.label);
+                  const moduleLabel = meta.label || getProductScopedModuleLabel(selectedProductName, key, key);
                   return (
                     <div
                       key={key}
@@ -652,9 +644,9 @@ function AssignProducts() {
                   type="button"
                   className="modules-save-btn"
                   onClick={handleInitialSave}
-                  disabled={savingModules}
+                  disabled={savingModules || !hasPendingChanges}
                 >
-                  {savingModules ? "Saving..." : "Save"}
+                  {savingModules ? "Saving..." : hasPendingChanges ? "Save Modules" : "Synced"}
                 </button>
               </div>
             </div>
@@ -696,7 +688,7 @@ function AssignProducts() {
               
               <div style={{ padding: "24px", maxHeight: "60vh", overflowY: "auto" }}>
                 <p style={{ margin: "0 0 16px 0", fontSize: "0.95rem", color: "#475569", fontWeight: 600 }}>
-                  Are you sure you want to update HRMS modules for <strong>{company?.name}</strong>?
+                  Are you sure you want to update {formatGtProductName(selectedProductName)} modules for <strong>{company?.name}</strong>?
                 </p>
 
                 {(() => {

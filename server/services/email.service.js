@@ -7,14 +7,29 @@ let transportVerified = false;
 const isProduction = () => String(process.env.NODE_ENV || "").toLowerCase() === "production";
 const isTruthy = (value) => String(value || "").trim().toLowerCase() === "true";
 const hasValue = (value) => Boolean(String(value || "").trim());
+const isPlaceholderValue = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized.includes("your_email") ||
+    normalized.includes("your_new_app_password") ||
+    normalized.includes("change_me") ||
+    normalized.includes("replace_me")
+  );
+};
+const hasCredentialValue = (value) => hasValue(value) && !isPlaceholderValue(value);
 
 const hasSmtpConfig = () =>
   hasValue(process.env.SMTP_HOST) &&
-  hasValue(process.env.SMTP_PORT);
+  hasValue(process.env.SMTP_PORT) &&
+  (
+    (!hasValue(process.env.SMTP_USER) && !hasValue(process.env.SMTP_PASS)) ||
+    (hasCredentialValue(process.env.SMTP_USER) && hasCredentialValue(process.env.SMTP_PASS))
+  );
 
 const hasGmailConfig = () =>
-  hasValue(process.env.GMAIL_USER) &&
-  hasValue(process.env.GMAIL_APP_PASSWORD);
+  hasCredentialValue(process.env.GMAIL_USER) &&
+  hasCredentialValue(process.env.GMAIL_APP_PASSWORD);
 
 const allowJsonPreviewTransport = () =>
   !isProduction() && isTruthy(process.env.ALLOW_DEV_JSON_EMAIL);
@@ -23,7 +38,7 @@ const allowDevOtpPreview = ({ force = false } = {}) => {
   if (force) return true;
   if (isProduction()) return false;
   const configured = String(process.env.ALLOW_DEV_OTP_IN_RESPONSE || "").trim().toLowerCase();
-  if (!configured) return true; // default ON in non-production
+  if (!configured) return true;
   return configured === "true";
 };
 
@@ -37,24 +52,15 @@ const createMailError = ({ message, publicMessage, code = "mail_delivery_failed"
 
 const getTransportDescriptor = () => {
   if (hasSmtpConfig()) {
-    return {
-      key: "smtp",
-      type: "smtp"
-    };
+    return { key: "smtp", type: "smtp" };
   }
 
   if (hasGmailConfig()) {
-    return {
-      key: "gmail",
-      type: "gmail"
-    };
+    return { key: "gmail", type: "gmail" };
   }
 
   if (allowJsonPreviewTransport()) {
-    return {
-      key: "json-preview",
-      type: "json"
-    };
+    return { key: "json-preview", type: "json" };
   }
 
   return null;
@@ -139,8 +145,15 @@ const getMailFrom = () =>
     process.env.MAIL_FROM ||
       process.env.SMTP_FROM ||
       process.env.GMAIL_USER ||
-      "Gitakshmi One <no-reply@gitakshmi.com>"
+      "Gitakshmi One <no-reply@example.com>"
   ).trim();
+
+const buildPreviewResult = ({ deliveryMode = "preview", previewOtp = null, previewUrl = null }) => ({
+  info: null,
+  deliveryMode,
+  previewOtp,
+  previewUrl
+});
 
 export const sendLoginOtpEmail = async ({ to, otp, expiresInMinutes, allowPreview = false }) => {
   const normalizedTo = String(to || "").trim().toLowerCase();
@@ -153,8 +166,21 @@ export const sendLoginOtpEmail = async ({ to, otp, expiresInMinutes, allowPrevie
     });
   }
 
-  const { descriptor, transporter } = getTransporter();
-  await verifyTransportIfNeeded({ transporter, descriptor });
+  let descriptor;
+  let transporter;
+  try {
+    ({ descriptor, transporter } = getTransporter());
+    await verifyTransportIfNeeded({ transporter, descriptor });
+  } catch (error) {
+    if (allowDevOtpPreview({ force: allowPreview })) {
+      console.warn(`[MAIL] Falling back to local OTP preview for ${normalizedTo}: ${error.message}`);
+      console.log(`[MAIL] OTP preview (${normalizedTo}): ${otp}`);
+      return buildPreviewResult({
+        previewOtp: otp
+      });
+    }
+    throw error;
+  }
 
   const subject = "Your Gitakshmi One login OTP";
   const text = [
@@ -196,17 +222,128 @@ export const sendLoginOtpEmail = async ({ to, otp, expiresInMinutes, allowPrevie
     return {
       info,
       deliveryMode: descriptor.type,
-      // In non-production, allow returning the OTP for debugging/dev UX when enabled.
-      // This helps when SMTP delivery is slow or unreliable during local testing.
       previewOtp: allowDevOtpPreview({ force: allowPreview }) ? otp : null
     };
   } catch (error) {
+    if (allowDevOtpPreview({ force: allowPreview })) {
+      console.warn(`[MAIL] Falling back to local OTP preview for ${normalizedTo}: ${error.message}`);
+      console.log(`[MAIL] OTP preview (${normalizedTo}): ${otp}`);
+      return buildPreviewResult({
+        previewOtp: otp
+      });
+    }
+
     throw createMailError({
       code: "mail_delivery_failed",
       status: 502,
       message: `Email send failed: ${error.message}`,
       publicMessage:
         "OTP email could not be delivered. Please verify the SMTP/Gmail configuration and try again."
+    });
+  }
+};
+
+export const sendAccountActionEmail = async ({
+  to,
+  actionUrl,
+  expiresInMinutes,
+  purpose = "activation",
+  allowPreview = false
+}) => {
+  const normalizedTo = String(to || "").trim().toLowerCase();
+  if (!normalizedTo) {
+    throw createMailError({
+      code: "mail_invalid_recipient",
+      status: 400,
+      message: "Recipient email is required",
+      publicMessage: "Recipient email is required"
+    });
+  }
+
+  let descriptor;
+  let transporter;
+  try {
+    ({ descriptor, transporter } = getTransporter());
+    await verifyTransportIfNeeded({ transporter, descriptor });
+  } catch (error) {
+    if (allowDevOtpPreview({ force: allowPreview })) {
+      console.warn(`[MAIL] Falling back to local account action preview for ${normalizedTo}: ${error.message}`);
+      console.log(`[MAIL] Account action preview (${normalizedTo}): ${actionUrl}`);
+      return buildPreviewResult({
+        previewUrl: actionUrl
+      });
+    }
+    throw error;
+  }
+
+  const isReset = String(purpose || "").trim().toLowerCase() === "reset";
+  const subject = isReset
+    ? "Reset your GT_ONE account password"
+    : "Activate your GT_ONE account";
+  const text = [
+    isReset
+      ? "Use the link below to reset your GT_ONE password:"
+      : "Use the link below to activate your GT_ONE account:",
+    actionUrl,
+    "",
+    `This link expires in ${expiresInMinutes} minutes.`,
+    "If you did not request this action, you can ignore this email."
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+      <h2 style="margin-bottom: 8px;">GT_ONE Account ${isReset ? "Reset" : "Activation"}</h2>
+      <p style="margin-top: 0;">
+        ${isReset
+          ? "Use the button below to reset your GT_ONE password."
+          : "Use the button below to activate your GT_ONE account and set your GT_ONE password."}
+      </p>
+      <p style="margin: 24px 0;">
+        <a
+          href="${actionUrl}"
+          style="display: inline-block; padding: 12px 20px; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 700;"
+        >
+          ${isReset ? "Reset GT_ONE Password" : "Activate GT_ONE Account"}
+        </a>
+      </p>
+      <p>This link expires in <strong>${expiresInMinutes} minutes</strong>.</p>
+      <p>If you did not request this action, you can safely ignore this email.</p>
+    </div>
+  `;
+
+  try {
+    const info = await transporter.sendMail({
+      from: getMailFrom(),
+      to: normalizedTo,
+      subject,
+      text,
+      html
+    });
+
+    if (descriptor.type === "json") {
+      console.warn(`[MAIL] Account action preview (${normalizedTo}): ${actionUrl}`);
+    }
+
+    return {
+      info,
+      deliveryMode: descriptor.type,
+      previewUrl: allowDevOtpPreview({ force: allowPreview }) ? actionUrl : null
+    };
+  } catch (error) {
+    if (allowDevOtpPreview({ force: allowPreview })) {
+      console.warn(`[MAIL] Falling back to local account action preview for ${normalizedTo}: ${error.message}`);
+      console.log(`[MAIL] Account action preview (${normalizedTo}): ${actionUrl}`);
+      return buildPreviewResult({
+        previewUrl: actionUrl
+      });
+    }
+
+    throw createMailError({
+      code: "mail_delivery_failed",
+      status: 502,
+      message: `Account action email send failed: ${error.message}`,
+      publicMessage:
+        "Account email could not be delivered. Please verify the SMTP/Gmail configuration and try again."
     });
   }
 };

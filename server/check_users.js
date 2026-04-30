@@ -1,22 +1,24 @@
 import mongoose from "mongoose";
-import dotenv from "dotenv";
-dotenv.config();
 
-const uri = process.env.MONGO_URI;
-console.log('Connecting to:', uri.replace(/:[^:]+@/, ':****@'));
+const MONGO_URI = "mongodb+srv://ravaldhruv85_db_user:wpf78tWf38Hvog7s@cluster0.rae6dld.mongodb.net/gitakshmi-one?appName=Cluster0";
 
-async function check() {
+async function run() {
   try {
-    await mongoose.connect(uri);
-    const User = mongoose.model('User', new mongoose.Schema({}, { strict: false }));
-    const users = await User.find({}, 'email name role').lean();
-    console.log('Users found:', users.length);
-    console.log(JSON.stringify(users, null, 2));
-    process.exit(0);
+    await mongoose.connect(MONGO_URI);
+    const db = mongoose.connection.db;
+    const users = db.collection("users");
+    
+    const userList = await users.find({}).toArray();
+    console.log("Users found:");
+    userList.forEach(u => {
+      console.log(`- ${u.email} (Role: ${u.role})`);
+    });
+
   } catch (err) {
-    console.error('Error:', err);
-    process.exit(1);
+    console.error(err);
+  } finally {
+    await mongoose.disconnect();
   }
 }
 
-check();
+run();

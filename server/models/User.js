@@ -19,6 +19,39 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+    authSource: {
+      type: String,
+      enum: ["local", "imported"],
+      default: "local"
+    },
+    accountStatus: {
+      type: String,
+      enum: ["pending_activation", "active", "suspended", "disabled"],
+      default: "active",
+      index: true
+    },
+    allowDirectLogin: {
+      type: Boolean,
+      default: true
+    },
+    importedFromAppKey: {
+      type: String,
+      default: null,
+      lowercase: true,
+      trim: true
+    },
+    activatedAt: {
+      type: Date,
+      default: null
+    },
+    lastActivationRequestedAt: {
+      type: Date,
+      default: null
+    },
+    lastSuccessfulLoginAt: {
+      type: Date,
+      default: null
+    },
     /**
      * Primary product context for this user (used for product-locked routing).
      * Company-level entitlements are still resolved via CompanyProduct.
@@ -41,6 +74,16 @@ const userSchema = new mongoose.Schema(
     tenantId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Tenant",
+      default: null
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+      index: true
+    },
+    deletedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
       default: null
     }
   },

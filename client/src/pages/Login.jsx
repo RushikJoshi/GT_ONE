@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api, { getAccessToken, setAccessToken } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
@@ -10,14 +10,14 @@ function Login() {
   const { setUser } = useAuth();
   const [didCheckSession, setDidCheckSession] = useState(false);
   const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-  const HRMS_BASE = import.meta.env.VITE_HRMS_BASE_URL || (isLocal ? "http://localhost:5176" : "https://hrms.dev.gitakshmi.com");
-  const TMS_BASE = import.meta.env.VITE_TMS_BASE_URL || "https://devprojects.gitakshmi.com";
+  const HRMS_BASE = import.meta.env.VITE_HRMS_BASE_URL || (isLocal ? "http://localhost:5176" : "http://localhost:5176");
+  const TMS_BASE = import.meta.env.VITE_TMS_BASE_URL || "http://localhost:5173";
 
   const TOKEN_BRIDGE_ALLOWED_ORIGINS = useMemo(() => {
     const origins = [
-      "https://hrms.dev.gitakshmi.com",
-      "https://devprojects.gitakshmi.com",
-      "https://gaccess.gitakshmi.com"
+      "http://localhost:5176",
+      "http://localhost:5173",
+      "http://localhost:5174"
     ];
 
     [
@@ -47,17 +47,19 @@ function Login() {
     }
   };
 
-  const shouldUseAbsoluteRedirect = (url) => {
+  const canNavigateToAbsoluteUrl = (url, { allowRemote = false } = {}) => {
     if (!url || typeof url !== "string" || !/^https?:\/\//i.test(url)) {
       return false;
     }
 
-    if (!isLocal) {
+    if (!isLocal || allowRemote) {
       return true;
     }
 
     return isLocalOriginUrl(url);
   };
+
+  const shouldUseAbsoluteRedirect = (url) => canNavigateToAbsoluteUrl(url);
 
   const markRedirectAttempt = (url) => {
     try {
@@ -99,7 +101,7 @@ function Login() {
       const parsed = new URL(url);
       const origin = parsed.origin;
       // Allow relative paths or allowed origins
-      const isAllowed = TOKEN_BRIDGE_ALLOWED_ORIGINS.has(origin) || origin.endsWith(".gitakshmi.com");
+      const isAllowed = TOKEN_BRIDGE_ALLOWED_ORIGINS.has(origin) || origin.endsWith(".example.com");
 
       if (!isAllowed) {
         return url;
@@ -113,16 +115,25 @@ function Login() {
     }
   };
 
-  const safeRedirectTo = (url, { replace = true, accessToken = null } = {}) => {
-    if (!url || typeof url !== "string") return false;
-    if (!/^https?:\/\//i.test(url)) return false;
+  const safeRedirectTo = (
+    url,
+    {
+      replace = true,
+      accessToken = null,
+      bridgeAccessToken = true,
+      allowRemote = false
+    } = {}
+  ) => {
+    if (!canNavigateToAbsoluteUrl(url, { allowRemote })) return false;
 
     if (shouldBlockAutoRedirect(url)) {
       // Silent block (no UI banner) to keep SPA stable.
       return false;
     }
 
-    const finalUrl = buildBridgeRedirectUrl(url, accessToken || getAccessToken());
+    const finalUrl = bridgeAccessToken
+      ? buildBridgeRedirectUrl(url, accessToken || getAccessToken())
+      : url;
     markRedirectAttempt(url);
     if (replace) {
       window.location.replace(finalUrl);
@@ -169,9 +180,41 @@ function Login() {
     return ["super_admin", "superadmin", "psa"].includes(normalizedRole);
   };
 
+  const isPortalAdminUser = (nextUser) => {
+    const normalizedEmail = String(nextUser?.email || "").trim().toLowerCase();
+    return isPsaRole(nextUser?.role) || normalizedEmail === "admin@example.com";
+  };
+
+  const goToDefaultPostLogin = useCallback(
+    (nextUser) => {
+      navigate(isPortalAdminUser(nextUser) ? "/dashboard" : "/launcher", { replace: true });
+    },
+    [navigate]
+  );
+
   const redirect = useMemo(
     () => searchParams.get("redirect") || "",
     [searchParams]
+  );
+  const ssoApp = useMemo(
+    () => searchParams.get("app") || "",
+    [searchParams]
+  );
+  const ssoRedirectUri = useMemo(
+    () => searchParams.get("redirect_uri") || searchParams.get("redirectUri") || "",
+    [searchParams]
+  );
+  const ssoState = useMemo(
+    () => searchParams.get("state") || "",
+    [searchParams]
+  );
+  const hasSsoRequest = useMemo(
+    () => Boolean(ssoApp && ssoRedirectUri),
+    [ssoApp, ssoRedirectUri]
+  );
+  const ssoTargetLabel = useMemo(
+    () => String(ssoApp || "").trim().toUpperCase(),
+    [ssoApp]
   );
   const hasExplicitRedirectUrl = useMemo(
     () => typeof redirect === "string" && /^https?:\/\//i.test(redirect),
@@ -190,10 +233,28 @@ function Login() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [resendingOtp, setResendingOtp] = useState(false);
+  const [activationActionPending, setActivationActionPending] = useState(false);
+  const [activationPreviewUrl, setActivationPreviewUrl] = useState("");
+  const [canRequestActivation, setCanRequestActivation] = useState(false);
   const [otpSecondsLeft, setOtpSecondsLeft] = useState(0);
   const [resendSecondsLeft, setResendSecondsLeft] = useState(0);
   const isOtpStep = Boolean(otpChallenge?.otpRequestId);
   const otpPreviewCode = otpChallenge?.devOtpPreview || "";
+  const buildAuthQuery = useCallback(() => {
+    const params = new URLSearchParams();
+
+    if (redirect) {
+      params.set("redirect", redirect);
+    }
+
+    if (hasSsoRequest) {
+      params.set("app", ssoApp);
+      params.set("redirect_uri", ssoRedirectUri);
+    }
+
+    const queryString = params.toString();
+    return queryString ? `?${queryString}` : "";
+  }, [hasSsoRequest, redirect, ssoApp, ssoRedirectUri]);
 
   useEffect(() => {
     if (!isOtpStep) {
@@ -229,6 +290,37 @@ function Login() {
     if (!hasExplicitRedirectUrl) return;
   }, [hasExplicitRedirectUrl, redirect]);
 
+  const completeSsoAuthorization = useCallback(async () => {
+    if (!hasSsoRequest) {
+      return false;
+    }
+
+    const params = new URLSearchParams({
+      app: ssoApp,
+      redirect_uri: ssoRedirectUri,
+      response_mode: "json"
+    });
+
+    if (ssoState) {
+      params.set("state", ssoState);
+    }
+
+    const res = await api.get(`/sso/authorize?${params.toString()}`);
+    const redirectTo = res.data?.redirectTo || "";
+
+    if (
+      safeRedirectTo(redirectTo, {
+        replace: false,
+        bridgeAccessToken: false,
+        allowRemote: true
+      })
+    ) {
+      return true;
+    }
+
+    throw new Error("SSO authorization completed, but redirect URL is invalid.");
+  }, [hasSsoRequest, ssoApp, ssoRedirectUri, ssoState]);
+
   useEffect(() => {
     let active = true;
     if (didCheckSession) return;
@@ -246,9 +338,22 @@ function Login() {
           setAccessToken(res.data.accessToken);
         }
 
-        if (isPsaRole(nextUser?.role)) {
-          navigate("/dashboard", { replace: true });
-          return;
+        if (hasSsoRequest) {
+          try {
+            if (await completeSsoAuthorization()) {
+              return;
+            }
+          } catch (ssoError) {
+            const status = ssoError?.response?.status;
+            if (status && status !== 401) {
+              setError(
+                ssoError?.response?.data?.message ||
+                ssoError?.message ||
+                "Failed to complete SSO authorization"
+              );
+              return;
+            }
+          }
         }
 
         if (hasExplicitRedirectUrl && shouldUseAbsoluteRedirect(redirect)) {
@@ -257,17 +362,7 @@ function Login() {
           }
         }
 
-        const normalizedRole = String(nextUser?.role || "")
-          .trim()
-          .toLowerCase()
-          .replace(/[\s-]+/g, "_");
-
-        const roleRedirect = resolveFallbackRedirect(normalizedRole, nextUser?.products || []);
-        if (roleRedirect) {
-          if (safeRedirectTo(roleRedirect, { replace: true })) {
-            return;
-          }
-        }
+        goToDefaultPostLogin(nextUser);
 
       } catch (_error) {
         // No active SSO session
@@ -284,7 +379,7 @@ function Login() {
     return () => {
       active = false;
     };
-  }, [didCheckSession, hasExplicitRedirectUrl, navigate, redirect, setUser]);
+  }, [completeSsoAuthorization, didCheckSession, goToDefaultPostLogin, hasExplicitRedirectUrl, hasSsoRequest, navigate, redirect, setUser]);
 
   if (checkingSession) {
     return (
@@ -307,6 +402,8 @@ function Login() {
 
   const onChange = (event) => {
     const { name, value } = event.target;
+    setCanRequestActivation(false);
+    setActivationPreviewUrl("");
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
@@ -321,9 +418,11 @@ function Login() {
 
     setError("");
     setNotice("");
+    setCanRequestActivation(false);
+    setActivationPreviewUrl("");
     try {
       setLoading(true);
-      const query = redirect ? `?redirect=${encodeURIComponent(redirect)}` : "";
+      const query = buildAuthQuery();
 
       if (isOtpStep) {
         if (!otpChallenge?.otpRequestId) {
@@ -348,12 +447,20 @@ function Login() {
           setAccessToken(accessToken);
         }
 
-        if (isPsaRole(nextUser?.role)) {
-          navigate("/dashboard", { replace: true });
-          return;
+        if (hasSsoRequest) {
+          try {
+            if (await completeSsoAuthorization()) {
+              return;
+            }
+          } catch (ssoError) {
+            setError(
+              ssoError?.response?.data?.message ||
+              ssoError?.message ||
+              "Failed to complete SSO authorization"
+            );
+            return;
+          }
         }
-
-        const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
 
         const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
@@ -363,14 +470,7 @@ function Login() {
           }
         }
 
-        const fallbackRedirect = resolveFallbackRedirect(normalizedRole, nextUser?.products || []);
-        if (fallbackRedirect) {
-          if (safeRedirectTo(fallbackRedirect, { replace: false, accessToken })) {
-            return;
-          }
-        }
-
-        setError("Login successful, but no app redirect is configured.");
+        goToDefaultPostLogin(nextUser);
         return;
       }
 
@@ -414,12 +514,20 @@ function Login() {
         setAccessToken(accessToken);
       }
 
-      if (isPsaRole(nextUser?.role)) {
-        navigate("/dashboard", { replace: true });
-        return;
+      if (hasSsoRequest) {
+        try {
+          if (await completeSsoAuthorization()) {
+            return;
+          }
+        } catch (ssoError) {
+          setError(
+            ssoError?.response?.data?.message ||
+            ssoError?.message ||
+            "Failed to complete SSO authorization"
+          );
+          return;
+        }
       }
-
-      const normalizedRole = String(nextUser?.role || "").trim().toLowerCase();
 
       const redirectUrl = res.data?.redirectUrl || res.data?.redirectTo;
 
@@ -429,18 +537,12 @@ function Login() {
         }
       }
 
-      const fallbackRedirect = resolveFallbackRedirect(normalizedRole, nextUser?.products || []);
-      if (fallbackRedirect) {
-        if (safeRedirectTo(fallbackRedirect, { replace: false, accessToken })) {
-          return;
-        }
-      }
-
-      setError("Login successful, but no app redirect is configured.");
+      goToDefaultPostLogin(nextUser);
     } catch (requestError) {
       if (isOtpStep && requestError?.response?.data?.reason === "otp_expired") {
         setOtpSecondsLeft(0);
       }
+      setCanRequestActivation(Boolean(requestError?.response?.data?.canRequestActivation));
       const message =
         requestError?.response?.data?.message ||
         requestError?.message ||
@@ -460,7 +562,7 @@ function Login() {
     setNotice("");
     try {
       setResendingOtp(true);
-      const query = redirect ? `?redirect=${encodeURIComponent(redirect)}` : "";
+      const query = buildAuthQuery();
       const res = await api.post(`/auth/resend-otp${query}`, {
         email: otpChallenge.email,
         otpRequestId: otpChallenge.otpRequestId,
@@ -503,6 +605,36 @@ function Login() {
     setError("");
   };
 
+  const handleRequestActivationReset = async () => {
+    const email = String(form.email || "").trim().toLowerCase();
+    if (!email || activationActionPending) {
+      return;
+    }
+
+    setActivationActionPending(true);
+    setError("");
+    setNotice("");
+    setActivationPreviewUrl("");
+
+    try {
+      const res = await api.post("/auth/request-activation-reset", {
+        email,
+        purpose: "activation"
+      });
+      setNotice(res.data?.message || "Activation link sent.");
+      setActivationPreviewUrl(res.data?.previewUrl || "");
+      setCanRequestActivation(false);
+    } catch (requestError) {
+      setError(
+        requestError?.response?.data?.message ||
+        requestError?.message ||
+        "Failed to send activation link"
+      );
+    } finally {
+      setActivationActionPending(false);
+    }
+  };
+
   return (
     <div className="login-container">
       <div className="login-branding">
@@ -540,11 +672,27 @@ function Login() {
             <p>
               {isOtpStep
                 ? `Enter the 6-digit code sent to ${otpChallenge.email}`
-                : "Please enter your credentials to continue"}
+                : hasSsoRequest
+                  ? `Sign in once to continue to ${ssoTargetLabel || "your application"}`
+                  : "Please enter your credentials to continue"}
             </p>
           </div>
 
           <form onSubmit={handleSubmit}>
+            {hasSsoRequest && !isOtpStep && (
+              <div className="error-message" style={{ background: "#eff6ff", color: "#1d4ed8", borderColor: "#bfdbfe" }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="20" height="20">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
+                </svg>
+                <div>
+                  <div>Single sign-on request for {ssoTargetLabel || "application"}.</div>
+                  <div style={{ marginTop: 4, fontSize: "0.92rem" }}>
+                    Use your GT_ONE account here. Do not enter product-specific credentials.
+                  </div>
+                </div>
+              </div>
+            )}
+
             {error && (
               <div className="error-message">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="20" height="20">
@@ -560,6 +708,17 @@ function Login() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
                 {notice}
+              </div>
+            )}
+
+            {activationPreviewUrl && !error && (
+              <div className="error-message" style={{ background: "#fffbeb", color: "#92400e", borderColor: "#fde68a" }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="20" height="20">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
+                </svg>
+                <a href={activationPreviewUrl} style={{ color: "inherit", textDecoration: "underline", fontWeight: 700 }}>
+                  Open activation link preview
+                </a>
               </div>
             )}
 
@@ -651,6 +810,24 @@ function Login() {
             <button type="submit" className="login-button" disabled={loading || (isOtpStep && otpSecondsLeft <= 0)}>
               {loading ? (isOtpStep ? "Verifying..." : "Signing in...") : (isOtpStep ? "Verify OTP" : "Sign In")}
             </button>
+
+            {!isOtpStep && canRequestActivation && (
+              <button
+                type="button"
+                className="login-button"
+                onClick={handleRequestActivationReset}
+                disabled={activationActionPending}
+                style={{
+                  marginTop: "12px",
+                  background: "#ffffff",
+                  color: "#1d4ed8",
+                  border: "1px solid #bfdbfe",
+                  boxShadow: "none"
+                }}
+              >
+                {activationActionPending ? "Sending activation link..." : "Send activation link"}
+              </button>
+            )}
 
             {isOtpStep && (
               <>

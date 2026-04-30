@@ -17,6 +17,14 @@ const companyProductSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true
+    },
+    enabledModules: {
+      type: Object,
+      default: {}
+    },
+    modules: {
+      type: [String],
+      default: []
     }
   },
   { timestamps: true }

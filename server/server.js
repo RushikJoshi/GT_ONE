@@ -6,6 +6,9 @@ import cookieParser from "cookie-parser";
 import helmet from "helmet";
 
 import authRoutes from "./routes/auth.routes.js";
+import appRoutes from "./routes/app.routes.js";
+import ssoRoutes from "./routes/sso.routes.js";
+import wellKnownRoutes from "./routes/wellKnown.routes.js";
 import companyRoutes from "./routes/company.routes.js";
 import tenantRoutes from "./routes/tenant.routes.js";
 import superAdminRoutes from "./routes/superAdmin.routes.js";
@@ -29,9 +32,11 @@ app.use(helmet({
       imgSrc: ["'self'", "data:", "blob:"],
       connectSrc: [
         "'self'", 
-        "https://gaccess.gitakshmi.com",
-        "https://hrms.dev.gitakshmi.com",
-        "https://devprojects.gitakshmi.com"
+        "http://localhost:5004",
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5176",
+        ...(process.env.CORS_ALLOWED_ORIGINS ? process.env.CORS_ALLOWED_ORIGINS.split(',') : [])
       ],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: [],
@@ -40,12 +45,27 @@ app.use(helmet({
 }));
 
 const PORT = process.env.PORT || 5004;
+const MONGO_DB_NAME = String(process.env.MONGO_DB_NAME || "").trim();
+
+const resolveMongoDbName = (uri, configuredDbName) => {
+  if (configuredDbName) {
+    return configuredDbName;
+  }
+
+  try {
+    const parsed = new URL(uri);
+    const pathname = String(parsed.pathname || "").replace(/^\/+/, "").trim();
+    return pathname || "";
+  } catch {
+    return "";
+  }
+};
 
 // CORS Configuration
 const DEFAULT_ALLOWED_ORIGINS = [
-  "https://gaccess.gitakshmi.com",
-  "https://hrms.dev.gitakshmi.com",
-  "https://devprojects.gitakshmi.com"
+  "http://localhost:5174",
+  "http://localhost:5176",
+  "http://localhost:5173"
 ];
 
 const normalizeOrigin = (value) => {
@@ -85,6 +105,7 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
 // Static Files & Frontend Build
@@ -107,6 +128,9 @@ app.get("/api/health", (req, res) => {
 
 // Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/sso", ssoRoutes);
+app.use("/.well-known", wellKnownRoutes);
+app.use("/api/applications", appRoutes);
 app.use("/api/companies", companyRoutes);
 app.use("/api/tenants", tenantRoutes);
 app.use("/api/super-admin", superAdminRoutes);
@@ -128,9 +152,17 @@ const connectDB = async () => {
       throw new Error("MONGO_URI is not defined in environment variables");
     }
 
+    const resolvedDbName = resolveMongoDbName(finalUri, MONGO_DB_NAME);
+    if (!resolvedDbName) {
+      throw new Error("MongoDB database name is missing. Set MONGO_DB_NAME or include the DB name in MONGO_URI.");
+    }
+
     console.log(`[SSO] Connecting to MongoDB: ${finalUri.replace(/:[^:]+@/, ":****@")}`);
-    await mongoose.connect(finalUri);
-    console.log(`[SSO] MongoDB Connected`);
+    const mongooseOptions = {};
+    mongooseOptions.dbName = resolvedDbName;
+
+    await mongoose.connect(finalUri, mongooseOptions);
+    console.log(`[SSO] MongoDB Connected (db=${mongoose.connection.name})`);
 
     // Backward-compatible migration: allow duplicate emails in Company/User.
     await dropLegacyUniqueEmailIndexes();

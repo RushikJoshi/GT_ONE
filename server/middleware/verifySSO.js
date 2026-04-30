@@ -1,8 +1,8 @@
-import jwt from "jsonwebtoken";
+import { verifyJwtWithContract } from "../services/auth.service.js";
 
-export const verifySSO = (req, res, next) => {
+export const verifySSO = async (req, res, next) => {
   try {
-    const token = req.cookies.token;
+    const token = req.cookies?.sso_token || req.cookies?.token;
 
     if (!token) {
       return res.status(401).json({
@@ -11,13 +11,9 @@ export const verifySSO = (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
-      issuer: process.env.JWT_ISSUER || "gitakshmi-sso",
-      audience: "sso",
-      algorithms: (process.env.JWT_ALLOWED_ALGS || "HS256")
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean)
+    const decoded = await verifyJwtWithContract({
+      token,
+      audience: "sso"
     });
 
     if (!decoded.sub || !(decoded.email || decoded.login) || !decoded.role || !Array.isArray(decoded.products)) {

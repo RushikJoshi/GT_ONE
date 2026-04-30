@@ -604,3 +604,352 @@ button.modules-save-btn:hover:not(:disabled) {
   }
 }
 
+/* Product module workspace redesign */
+.module-page--flush {
+  margin: -16px -16px -16px -8px;
+  height: 100vh;
+  overflow: auto;
+  background:
+    linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+}
+
+.module-page--flush .config-shell {
+  min-height: 100%;
+  height: auto;
+  padding: 18px;
+  display: grid;
+  grid-template-columns: 330px minmax(0, 1fr);
+  grid-template-areas:
+    "company company"
+    "stats stats"
+    "products modules";
+  gap: 14px;
+  align-items: start;
+  overflow: visible;
+}
+
+.company-row {
+  grid-area: company;
+  padding: 0;
+}
+
+.selected-company {
+  min-height: 74px;
+  padding: 14px;
+  border: 1px solid #dbe3ef;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
+}
+
+.selected-company::before {
+  content: "Product Module Control";
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.company-select {
+  min-height: 46px;
+  border-radius: 12px;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  font-size: 14px;
+}
+
+.company-action {
+  min-height: 46px;
+  border-radius: 12px;
+  border-color: #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.company-action:hover {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+}
+
+.stats-row {
+  grid-area: stats;
+  padding: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.stat-card {
+  min-height: 88px;
+  border-radius: 16px;
+  border-color: #dbe3ef;
+  box-shadow: none;
+  padding: 16px;
+}
+
+.stat-card::before {
+  width: 5px;
+  height: 100%;
+}
+
+.stat-card--total::before {
+  background: #2563eb;
+}
+
+.stat-card--active::before {
+  background: #16a34a;
+}
+
+.stat-card--inactive::before {
+  background: #f97316;
+}
+
+.stat-label {
+  letter-spacing: 0.08em;
+}
+
+.stat-value {
+  font-size: 26px;
+}
+
+.config-left {
+  grid-area: products;
+}
+
+.config-right {
+  grid-area: modules;
+}
+
+.config-left .module-card,
+.config-right .module-card {
+  border-radius: 18px;
+  border-color: #dbe3ef;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.07);
+}
+
+.config-left .module-card {
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - 190px);
+  overflow: auto !important;
+}
+
+.config-left .module-card > div:first-child {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #ffffff;
+  border-bottom-color: #dbe3ef !important;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.product-option {
+  min-height: 64px;
+  border-radius: 14px;
+  border-color: #dbe3ef;
+  background: #ffffff;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+}
+
+.product-option--selectable:hover {
+  background: #f0f9ff;
+  border-color: #7dd3fc;
+}
+
+.product-option--selected {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.22);
+}
+
+.product-option--selected:hover {
+  background: #111827;
+  border-color: #111827;
+}
+
+.product-option-icon-wrap {
+  border-radius: 12px;
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.product-option--selected .product-option-icon-wrap {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.product-option-label {
+  font-size: 14px;
+}
+
+.module-card-pad {
+  padding: 0;
+  overflow: hidden;
+}
+
+.modules-head {
+  min-height: 72px;
+  margin: 0;
+  padding: 16px 18px;
+  border-bottom: 1px solid #dbe3ef;
+  background: #ffffff;
+}
+
+.modules-kpi {
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.modules-kpi-product {
+  color: #2563eb;
+}
+
+.ghost-action {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+}
+
+.ghost-action:hover {
+  background: #ecfdf5;
+  border-color: #86efac;
+}
+
+.modules-grid {
+  padding: 16px;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 14px;
+  background: #f8fafc;
+}
+
+.module-tile {
+  min-height: 92px;
+  border-radius: 16px;
+  border-color: #dbe3ef;
+  background: #ffffff;
+  padding: 16px;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.05);
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.module-tile:hover {
+  transform: translateY(-1px);
+  border-color: #93c5fd;
+  box-shadow: 0 12px 22px rgba(15, 23, 42, 0.09);
+}
+
+.module-tile:has(.module-switch:checked) {
+  border-color: #86efac;
+  background: #f7fef9;
+}
+
+.module-left::before {
+  content: "";
+  width: 10px;
+  height: 42px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  flex-shrink: 0;
+}
+
+.module-tile:has(.module-switch:checked) .module-left::before {
+  background: #16a34a;
+}
+
+.module-name {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.module-status {
+  font-size: 11px;
+}
+
+.module-switch {
+  width: 50px;
+  height: 28px;
+}
+
+.module-switch::after {
+  width: 22px;
+  height: 22px;
+}
+
+.module-switch:checked::after {
+  transform: translateX(22px);
+}
+
+button.modules-save-btn {
+  min-width: 144px;
+  min-height: 44px;
+  border-radius: 12px;
+  background: #2563eb;
+  color: #ffffff;
+  padding: 0 18px;
+}
+
+button.modules-save-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+button.modules-save-btn:disabled {
+  background: #cbd5e1;
+  color: #475569;
+}
+
+.config-right .module-card > div:last-child {
+  padding: 14px 16px !important;
+  background: #ffffff;
+  border-top: 1px solid #dbe3ef;
+}
+
+@media (max-width: 1180px) {
+  .module-page--flush .config-shell {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "company"
+      "stats"
+      "products"
+      "modules";
+  }
+
+  .config-left .module-card {
+    position: static;
+    max-height: none;
+  }
+
+  .stats-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .module-page--flush .config-shell {
+    padding: 12px;
+  }
+
+  .selected-company {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .selected-company::before {
+    justify-content: center;
+  }
+
+  .stats-row,
+  .modules-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

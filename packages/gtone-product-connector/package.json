@@ -1,0 +1,12 @@
+{
+  "name": "@gitakshmi/gtone-product-connector",
+  "version": "1.0.0",
+  "description": "Reusable GT_ONE SSO connector for first-party products",
+  "main": "index.js",
+  "type": "commonjs",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "axios": "^1.13.6",
+    "jsonwebtoken": "^9.0.3"
+  }
+}

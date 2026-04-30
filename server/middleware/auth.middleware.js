@@ -18,7 +18,7 @@ export const protect = async (req, res, next) => {
     }
 
     // Verify token
-    const decoded = verifyJwtWithContract({
+    const decoded = await verifyJwtWithContract({
       token,
       audience: "sso"
     });
@@ -49,7 +49,7 @@ export const optionalProtect = async (req, _res, next) => {
       return next();
     }
 
-    const decoded = verifyJwtWithContract({
+    const decoded = await verifyJwtWithContract({
       token,
       audience: "sso"
     });

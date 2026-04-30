@@ -123,6 +123,16 @@ const companySchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+      index: true
+    },
+    deletedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
     }
   },
   { timestamps: true }

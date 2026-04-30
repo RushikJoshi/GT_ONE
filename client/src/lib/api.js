@@ -22,7 +22,7 @@ const resolveApiBaseUrl = () => {
     return configuredApiUrl;
   }
 
-  return "https://devgaccess.gitakshmi.com/api";
+  return "/api";
 };
 
 const api = axios.create({

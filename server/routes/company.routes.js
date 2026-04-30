@@ -7,6 +7,8 @@ import {
   deleteCompany,
   setCompanyActiveStatus,
   getCompanyHrmsModules,
+  getCompanyProductModules,
+  updateCompanyProductModules,
   updateCompanyHrmsModules
 } from "../controllers/company.controller.js";
 import { verifyToken, authorizeRoles } from "../middleware/auth.middleware.js";
@@ -24,5 +26,7 @@ router.patch("/:companyId/status", setCompanyActiveStatus);
 router.put("/:companyId/products", assignCompanyProducts);
 router.get("/:id/hrms-modules", getCompanyHrmsModules);
 router.put("/:id/hrms-modules", updateCompanyHrmsModules);
+router.get("/:id/product-modules", getCompanyProductModules);
+router.put("/:id/products/:productName/modules", updateCompanyProductModules);
 
 export default router;
